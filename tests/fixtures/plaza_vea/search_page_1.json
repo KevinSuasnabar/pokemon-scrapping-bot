@@ -1,0 +1,71 @@
+[
+  {
+    "productId": "102340707",
+    "productName": "Colección de Figuritas Tech Sticker POKÉMON TCG 30.º Aniversario en Inglés",
+    "linkText": "coleccion-tech-sticker-tcg-pokemon-30-aniversario-ingles-20711650",
+    "link": "https://www.plazavea.com.pe/coleccion-tech-sticker-tcg-pokemon-30-aniversario-ingles-20711650/p",
+    "allSpecifications": ["Modelo"],
+    "items": [
+      {
+        "itemId": "12590493",
+        "sellers": [
+          {
+            "sellerId": "1",
+            "commertialOffer": {
+              "Price": 89.9,
+              "ListPrice": 89.9,
+              "AvailableQuantity": 9,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "productId": "102340900",
+    "productName": "Pokemon TCG 30 Aniversario Elite Trainer Box En Español",
+    "linkText": "pokemon-tcg-30-aniversario-elite-trainer-box-espanol-20711900",
+    "link": "https://www.plazavea.com.pe/pokemon-tcg-30-aniversario-elite-trainer-box-espanol-20711900/p",
+    "allSpecifications": [],
+    "items": [
+      {
+        "itemId": "12590600",
+        "sellers": [
+          {
+            "sellerId": "1",
+            "commertialOffer": {
+              "Price": 279.9,
+              "ListPrice": 279.9,
+              "AvailableQuantity": 4,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "productId": "102341000",
+    "productName": "Peluche Pikachu Pokemon 30 Aniversario",
+    "linkText": "peluche-pikachu-pokemon-30-aniversario-20712000",
+    "link": "https://www.plazavea.com.pe/peluche-pikachu-pokemon-30-aniversario-20712000/p",
+    "allSpecifications": [],
+    "items": [
+      {
+        "itemId": "12590700",
+        "sellers": [
+          {
+            "sellerId": "1",
+            "commertialOffer": {
+              "Price": 99.9,
+              "ListPrice": 99.9,
+              "AvailableQuantity": 0,
+              "IsAvailable": false
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

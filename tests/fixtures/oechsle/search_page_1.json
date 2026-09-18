@@ -1,0 +1,48 @@
+[
+  {
+    "productId": "1001800001",
+    "productName": "Pokemon TCG 30 Aniversario Blister En Ingles",
+    "linkText": "pokemon-tcg-30-aniversario-blister-ingles-30001",
+    "link": "https://www.oechsle.pe/pokemon-tcg-30-aniversario-blister-ingles-30001/p",
+    "allSpecifications": [],
+    "items": [
+      {
+        "itemId": "20590001",
+        "sellers": [
+          {
+            "sellerId": "1",
+            "commertialOffer": {
+              "Price": 49.9,
+              "ListPrice": 49.9,
+              "AvailableQuantity": 12,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "productId": "1001800002",
+    "productName": "Figura de Accion Pikachu 30 Aniversario",
+    "linkText": "figura-de-accion-pikachu-30-aniversario-30002",
+    "link": "https://www.oechsle.pe/figura-de-accion-pikachu-30-aniversario-30002/p",
+    "allSpecifications": [],
+    "items": [
+      {
+        "itemId": "20590002",
+        "sellers": [
+          {
+            "sellerId": "1",
+            "commertialOffer": {
+              "Price": 59.9,
+              "ListPrice": 59.9,
+              "AvailableQuantity": 5,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

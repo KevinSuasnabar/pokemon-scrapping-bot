@@ -1,0 +1,29 @@
+{
+  "resources": {
+    "results": {
+      "products": [
+        {
+          "id": 9595590377709,
+          "title": "Pokemon TCG 30 Aniversario ETB En Español",
+          "url": "/products/pokemon-tcg-30-aniversario-etb-en-espanol?_pos=1&_psq=pokemon+30+aniversario&_psid=b4bfb3b5f&_ss=e",
+          "price": "289.90",
+          "available": true
+        },
+        {
+          "id": 9595590344941,
+          "title": "Pokemon TCG 30 Aniversario ETB En Inglés",
+          "url": "/products/pokemon-tcg-30-aniversario-etb-en-ingles?_pos=2&_psq=pokemon+30+aniversario&_psid=b4bfb3b5f&_ss=e",
+          "price": "289.90",
+          "available": false
+        },
+        {
+          "id": 9593969574125,
+          "title": "Pokemon TCG 30 Aniversario Pack X3 Booster en Inglés",
+          "url": "/products/pokemon-tcg-30-aniversario-pack-x3-booster-en-ingles?_pos=5&_psq=pokemon+30+aniversario&_psid=b4bfb3b5f&_ss=e",
+          "price": "89.90",
+          "available": true
+        }
+      ]
+    }
+  }
+}

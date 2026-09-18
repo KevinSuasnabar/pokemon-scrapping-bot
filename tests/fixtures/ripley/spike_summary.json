@@ -1,0 +1,80 @@
+{
+  "decision": "httpx",
+  "probes": [
+    {
+      "name": "robots_txt",
+      "status": 200,
+      "server": "cloudflare",
+      "set_cookie_names": [
+        "__cf_bm",
+        "_cfuvid"
+      ],
+      "challenge_headers": {
+        "cf-cache-status": "HIT",
+        "cf-ray": "a3cd46d33f6c83ea-EZE"
+      },
+      "error": null
+    },
+    {
+      "name": "home",
+      "status": 200,
+      "server": "cloudflare",
+      "set_cookie_names": [
+        "productlistpage_bff_token"
+      ],
+      "challenge_headers": {
+        "cf-cache-status": "BYPASS",
+        "cf-ray": "a3cd46d398cf83ea-EZE"
+      },
+      "error": null
+    },
+    {
+      "name": "search_pokemon",
+      "status": 200,
+      "server": "cloudflare",
+      "set_cookie_names": [
+        "sponsoredUserId",
+        "productlistpage_bff_apx_token"
+      ],
+      "challenge_headers": {
+        "cf-cache-status": "BYPASS",
+        "cf-ray": "a3cd46d899cf83ea-EZE"
+      },
+      "error": null
+    },
+    {
+      "name": "home_warmed",
+      "status": 200,
+      "server": "cloudflare",
+      "set_cookie_names": [],
+      "challenge_headers": {
+        "cf-cache-status": "BYPASS",
+        "cf-ray": "a3cd46e36dd983ea-EZE"
+      },
+      "error": null
+    },
+    {
+      "name": "search_pokemon_warmed",
+      "status": 200,
+      "server": "cloudflare",
+      "set_cookie_names": [],
+      "challenge_headers": {
+        "cf-cache-status": "BYPASS",
+        "cf-ray": "a3cd46e6afe283ea-EZE"
+      },
+      "error": null
+    },
+    {
+      "name": "vtex_products_search",
+      "status": 404,
+      "server": "cloudflare",
+      "set_cookie_names": [],
+      "challenge_headers": {
+        "cf-cache-status": "HIT",
+        "cf-ray": "a3cd46f139de83ea-EZE"
+      },
+      "error": null
+    }
+  ],
+  "saved_fixture": "/home/kevin/personal/workspace/projects/pokemon-scrapping-v2/tests/fixtures/ripley/spike_search_pokemon.html"
+}

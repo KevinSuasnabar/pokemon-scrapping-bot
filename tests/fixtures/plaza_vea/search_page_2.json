@@ -1,0 +1,25 @@
+[
+  {
+    "productId": "102341234",
+    "productName": "Pokemon TCG 30th Anniversary Booster Box (ENG)",
+    "linkText": "pokemon-tcg-30th-anniversary-booster-box-eng-20713000",
+    "link": "https://www.plazavea.com.pe/pokemon-tcg-30th-anniversary-booster-box-eng-20713000/p",
+    "allSpecifications": [],
+    "items": [
+      {
+        "itemId": "12590800",
+        "sellers": [
+          {
+            "sellerId": "1",
+            "commertialOffer": {
+              "Price": 899.9,
+              "ListPrice": 899.9,
+              "AvailableQuantity": 2,
+              "IsAvailable": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
