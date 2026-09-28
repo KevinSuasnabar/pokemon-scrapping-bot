@@ -47,20 +47,20 @@ class OfferRepository(Protocol):
         ...
 
     def last_known(self, store: str) -> dict[str, ObservationSnapshot]:
-        """Newest observation per `external_id`, keyed by `external_id`."""
+        """Current known state per `external_id`, keyed by `external_id` —
+        exactly one entry per product, never a history."""
         ...
 
-    def record_observations(self, run_id: int, offers: Sequence[Offer]) -> None:
-        """Append-only insert, own transaction — see design's failure-isolation
-        decision (#9)."""
+    def save_current_state(self, run_id: int, offers: Sequence[Offer]) -> None:
+        """Replaces (not appends) each offer's stored state — own
+        transaction, see design's failure-isolation decision (#9). User
+        decision, 2026-09-28: this project tracks "is it available now", not
+        price history, so nothing is retained beyond the latest state per
+        product."""
         ...
-
-    def price_history(
-        self, store: str, external_id: str, limit: int = 50
-    ) -> list[ObservationSnapshot]: ...
 
     def current_listing(self, store: str | None = None) -> list[CurrentListingEntry]:
-        """Latest observation per (store, product), across all stores or one
+        """Current state per (store, product), across all stores or one
         `store` if given — backs the offer-console-report "Current Matching
         Listing View" requirement, independent of any particular run's events.
         """

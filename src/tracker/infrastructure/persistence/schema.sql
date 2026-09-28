@@ -33,9 +33,14 @@ CREATE TABLE IF NOT EXISTS product (
   UNIQUE (store_slug, external_id)
 );
 
-CREATE TABLE IF NOT EXISTS observation (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id INTEGER NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+-- Exactly one row per product: the last-known price/availability, replaced
+-- (not appended) on every run. User-confirmed design decision, 2026-09-28:
+-- the project's purpose is "is it available right now", not price history —
+-- an earlier append-only `observation` table accumulated ~7,000 rows for 12
+-- products over 4 days of unattended running, none of which was ever read
+-- back (the `--history` feature it existed for was confirmed unused).
+CREATE TABLE IF NOT EXISTS current_state (
+  product_id INTEGER PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
   run_id     INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,
   price_cents INTEGER,                              -- NULL = price not published
   currency TEXT NOT NULL DEFAULT 'PEN',
@@ -44,7 +49,4 @@ CREATE TABLE IF NOT EXISTS observation (
   observed_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_obs_product_time
-  ON observation (product_id, observed_at DESC, id DESC);   -- serves "last observation per product"
-CREATE INDEX IF NOT EXISTS idx_obs_run     ON observation (run_id);
 CREATE INDEX IF NOT EXISTS idx_product_store ON product (store_slug);

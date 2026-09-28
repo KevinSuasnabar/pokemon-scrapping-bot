@@ -5,6 +5,8 @@ baseline labeling, diff isolation across stores."""
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -260,3 +262,81 @@ def test_dedupe_by_key_across_multiple_queries(tmp_db: sqlite3.Connection) -> No
     outcome = use_case.execute(["pokemon 30 aniversario", "pokemon 30th anniversary"])
 
     assert outcome.results[0].offer_count == 1  # not double-counted
+
+
+def test_execute_fetches_every_store_concurrently_not_sequentially(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    """Proves genuine concurrency, not just "still happens to work": each
+    fake adapter blocks on a shared barrier until every other adapter has
+    ALSO reached it. If execute() fetched stores one at a time (the old
+    behavior), the first adapter's search() would hang forever waiting for
+    adapters that never get a turn to run — this test would time out and
+    fail rather than silently pass."""
+    # Real seeded store slugs (tmp_db fixture calls seed_stores()) — a made-up
+    # slug would fail record_store_run's FOREIGN KEY constraint.
+    store_slugs = ["plaza_vea", "oechsle", "ripley", "ilahui"]
+    barrier = threading.Barrier(len(store_slugs), timeout=2)
+
+    class _BarrierAdapter:
+        def __init__(self, store_slug: str) -> None:
+            self.store_slug = store_slug
+
+        def fetch(self, query: str):  # pragma: no cover - unused, search() is called directly
+            return []
+
+        def parse(self, payloads, observed_at):  # pragma: no cover
+            return []
+
+        def search(self, query: str, observed_at: datetime) -> list:
+            barrier.wait()  # would deadlock/time out under sequential execution
+            return []
+
+    repo = SqliteOfferRepository(tmp_db)
+    adapters = [_BarrierAdapter(slug) for slug in store_slugs]
+    use_case = TrackOffersUseCase(adapters, repo, _NullReporter(), _StepClock([RUN1]))
+
+    outcome = use_case.execute(["pokemon 30 aniversario"])  # must not hang or raise
+
+    assert len(outcome.results) == len(store_slugs)
+    assert all(r.status == "ok" for r in outcome.results)
+
+
+def test_execute_results_preserve_adapter_order_regardless_of_fetch_completion_order(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    """The concurrent fetch phase completes in whatever order threads
+    finish, but `outcome.results` must still be reported in the same order
+    the adapters were configured — console/JSON output ordering must stay
+    predictable regardless of which store's network call happened to
+    return first."""
+    class _SlowFirstAdapter:
+        """The FIRST configured adapter is deliberately the SLOWEST to
+        finish, so completion order is the reverse of configuration order —
+        a real ordering bug would show up as results in completion order."""
+
+        def __init__(self, store_slug: str, delay: float) -> None:
+            self.store_slug = store_slug
+            self._delay = delay
+
+        def fetch(self, query: str):  # pragma: no cover
+            return []
+
+        def parse(self, payloads, observed_at):  # pragma: no cover
+            return []
+
+        def search(self, query: str, observed_at: datetime) -> list:
+            time.sleep(self._delay)
+            return []
+
+    repo = SqliteOfferRepository(tmp_db)
+    adapters = [
+        _SlowFirstAdapter("plaza_vea", delay=0.05),
+        _SlowFirstAdapter("oechsle", delay=0.0),
+        _SlowFirstAdapter("ripley", delay=0.0),
+    ]
+    use_case = TrackOffersUseCase(adapters, repo, _NullReporter(), _StepClock([RUN1]))
+
+    outcome = use_case.execute(["pokemon 30 aniversario"])
+
+    assert [r.store for r in outcome.results] == ["plaza_vea", "oechsle", "ripley"]

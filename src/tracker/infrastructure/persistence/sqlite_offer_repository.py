@@ -43,22 +43,20 @@ def _iso_to_dt(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+#: `current_state` holds exactly one row per product (see schema.sql) — a
+#: plain join, no "newest of many" subquery needed anymore.
 _LAST_KNOWN_SQL = """
-SELECT p.external_id, o.price_cents, o.currency, o.availability, o.observed_at
+SELECT p.external_id, cs.price_cents, cs.currency, cs.availability, cs.observed_at
 FROM product p
-JOIN observation o ON o.id = (
-  SELECT o2.id FROM observation o2 WHERE o2.product_id = p.id
-  ORDER BY o2.observed_at DESC, o2.id DESC LIMIT 1)
+JOIN current_state cs ON cs.product_id = p.id
 WHERE p.store_slug = ?
 """
 
 _CURRENT_LISTING_SQL = """
 SELECT p.store_slug, p.external_id, p.title, p.url,
-       o.price_cents, o.currency, o.availability, o.observed_at
+       cs.price_cents, cs.currency, cs.availability, cs.observed_at
 FROM product p
-JOIN observation o ON o.id = (
-  SELECT o2.id FROM observation o2 WHERE o2.product_id = p.id
-  ORDER BY o2.observed_at DESC, o2.id DESC LIMIT 1)
+JOIN current_state cs ON cs.product_id = p.id
 """
 
 
@@ -118,9 +116,12 @@ class SqliteOfferRepository:
             for row in rows
         }
 
-    def record_observations(self, run_id: int, offers: Sequence[Offer]) -> None:
+    def save_current_state(self, run_id: int, offers: Sequence[Offer]) -> None:
         """Own transaction: one store's write can never be partially applied
-        alongside another store's failure (design decision #9)."""
+        alongside another store's failure (design decision #9). Replaces
+        (UPSERT) each product's `current_state` row rather than appending —
+        user decision, 2026-09-28: no history is retained, only the latest
+        known state per product."""
         try:
             for offer in offers:
                 self._conn.execute(
@@ -151,9 +152,15 @@ class SqliteOfferRepository:
                 price_cents, currency = _money_to_cents(offer.price)
                 self._conn.execute(
                     """
-                    INSERT INTO observation
+                    INSERT INTO current_state
                         (product_id, run_id, price_cents, currency, availability, observed_at)
                     VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (product_id) DO UPDATE SET
+                        run_id = excluded.run_id,
+                        price_cents = excluded.price_cents,
+                        currency = excluded.currency,
+                        availability = excluded.availability,
+                        observed_at = excluded.observed_at
                     """,
                     (
                         product_row["id"],
@@ -168,32 +175,6 @@ class SqliteOfferRepository:
         except Exception:
             self._conn.rollback()
             raise
-
-    def price_history(
-        self, store: str, external_id: str, limit: int = 50
-    ) -> list[ObservationSnapshot]:
-        rows = self._conn.execute(
-            """
-            SELECT o.price_cents, o.currency, o.availability, o.observed_at
-            FROM observation o
-            JOIN product p ON p.id = o.product_id
-            WHERE p.store_slug = ? AND p.external_id = ?
-            ORDER BY o.observed_at DESC, o.id DESC
-            LIMIT ?
-            """,
-            (store, external_id, limit),
-        ).fetchall()
-        observations = [
-            ObservationSnapshot(
-                external_id=external_id,
-                price=_cents_to_money(row["price_cents"], row["currency"]),
-                availability=Availability(row["availability"]),
-                observed_at=_iso_to_dt(row["observed_at"]),
-            )
-            for row in rows
-        ]
-        observations.reverse()  # most-recent-N, returned oldest-first (chronological)
-        return observations
 
     def current_listing(self, store: str | None = None) -> list[CurrentListingEntry]:
         query = _CURRENT_LISTING_SQL

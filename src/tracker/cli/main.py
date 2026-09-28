@@ -10,28 +10,52 @@ from __future__ import annotations
 
 import argparse
 import json as json_module
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 
 import httpx
+from dotenv import find_dotenv, load_dotenv
 
+from tracker.adapters.reporting.composite import CompositeReporter
 from tracker.adapters.reporting.console import ConsoleReporter
+from tracker.adapters.reporting.telegram import TelegramReporter
+from tracker.adapters.stores.falabella import FalabellaAdapter
 from tracker.adapters.stores.ilahui import IlahuiAdapter
+from tracker.adapters.stores.metro import MetroAdapter
 from tracker.adapters.stores.oechsle import OechsleAdapter
+from tracker.adapters.stores.pharmax import PharmaxAdapter
 from tracker.adapters.stores.plaza_vea import PlazaVeaAdapter
 from tracker.adapters.stores.ripley import HttpxTransport, RipleyAdapter
-from tracker.application.dto import CurrentListingEntry, ObservationSnapshot, RunOutcome
-from tracker.application.ports import StoreAdapter
+from tracker.adapters.stores.tailoy import TaiLoyAdapter
+from tracker.adapters.stores.wong import WongAdapter
+from tracker.application.dto import CurrentListingEntry, RunOutcome
+from tracker.application.ports import Reporter, StoreAdapter
 from tracker.application.track_offers import TrackOffersUseCase
 from tracker.infrastructure.http.client import build_http_client
 from tracker.infrastructure.persistence.connection import apply_schema, connect, seed_stores
 from tracker.infrastructure.persistence.sqlite_offer_repository import SqliteOfferRepository
 
+#: Read at the point `--telegram` is used, not at import time, so tests can
+#: monkeypatch `os.environ` freely.
+TELEGRAM_BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID_ENV = "TELEGRAM_CHAT_ID"
+
 DEFAULT_QUERIES: tuple[str, ...] = ("pokemon 30 aniversario", "pokemon 30th anniversary")
 DEFAULT_DB_PATH = "./tracker.db"
-ALL_STORE_SLUGS: tuple[str, ...] = ("plaza_vea", "oechsle", "ripley", "ilahui")
+ALL_STORE_SLUGS: tuple[str, ...] = (
+    "plaza_vea",
+    "oechsle",
+    "ripley",
+    "ilahui",
+    "pharmax",
+    "tailoy",
+    "falabella",
+    "metro",
+    "wong",
+)
 
 
 class SystemClock:
@@ -55,6 +79,11 @@ def _build_adapters(client: httpx.Client, store_filter: Sequence[str] | None) ->
         "oechsle": lambda: OechsleAdapter(client),
         "ilahui": lambda: IlahuiAdapter(client),
         "ripley": lambda: RipleyAdapter(transport=HttpxTransport(client)),
+        "pharmax": lambda: PharmaxAdapter(client),
+        "tailoy": lambda: TaiLoyAdapter(client),
+        "falabella": lambda: FalabellaAdapter(client),
+        "metro": lambda: MetroAdapter(client),
+        "wong": lambda: WongAdapter(client),
     }
     slugs = store_filter or ALL_STORE_SLUGS
     return [factories[slug]() for slug in slugs if slug in factories]
@@ -77,11 +106,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Emit machine-readable JSON instead of console text"
     )
     parser.add_argument(
-        "--history",
-        metavar="STORE:EXTERNAL_ID",
-        help="Print price history for one product and exit (no network calls)",
-    )
-    parser.add_argument(
         "--list",
         action="store_true",
         dest="list_current",
@@ -96,7 +120,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "until interrupted with Ctrl+C. Omit to run once and exit."
         ),
     )
+    parser.add_argument(
+        "--telegram",
+        action="store_true",
+        help=(
+            "Also push a Telegram message for any currently-in-stock event "
+            f"(requires {TELEGRAM_BOT_TOKEN_ENV} and {TELEGRAM_CHAT_ID_ENV} "
+            "environment variables). Sends nothing on a run with no in-stock "
+            "events — safe to combine with --interval for a long-running watch."
+        ),
+    )
     return parser
+
+
+def _telegram_credentials_from_env() -> tuple[str, str] | None:
+    bot_token = os.environ.get(TELEGRAM_BOT_TOKEN_ENV)
+    chat_id = os.environ.get(TELEGRAM_CHAT_ID_ENV)
+    if not bot_token or not chat_id:
+        return None
+    return bot_token, chat_id
 
 
 def _exit_code(statuses: Sequence[str]) -> int:
@@ -148,14 +190,6 @@ def _outcome_to_json(outcome: RunOutcome) -> dict[str, object]:
     }
 
 
-def _observation_to_json(observation: ObservationSnapshot) -> dict[str, object]:
-    return {
-        "observed_at": observation.observed_at.isoformat(),
-        "price": str(observation.price.amount) if observation.price else None,
-        "availability": observation.availability.value,
-    }
-
-
 def _listing_entry_to_json(entry: CurrentListingEntry) -> dict[str, object]:
     return {
         "store": entry.store,
@@ -168,12 +202,24 @@ def _listing_entry_to_json(entry: CurrentListingEntry) -> dict[str, object]:
     }
 
 
+def _build_reporter(args: argparse.Namespace, client: httpx.Client) -> Reporter:
+    base: Reporter = _NullReporter() if args.json else ConsoleReporter()
+    if not args.telegram:
+        return base
+    # main() already validated these are present before any network/DB work
+    # started; re-checking here would just duplicate that error path.
+    credentials = _telegram_credentials_from_env()
+    assert credentials is not None
+    bot_token, chat_id = credentials
+    return CompositeReporter([base, TelegramReporter(client, bot_token, chat_id)])
+
+
 def _run_once(
     repository: SqliteOfferRepository, client: httpx.Client, args: argparse.Namespace
 ) -> int:
     adapters = _build_adapters(client, args.stores)
     queries = args.queries or list(DEFAULT_QUERIES)
-    reporter = _NullReporter() if args.json else ConsoleReporter()
+    reporter = _build_reporter(args, client)
     use_case = TrackOffersUseCase(
         adapters=adapters, repository=repository, reporter=reporter, clock=SystemClock()
     )
@@ -200,7 +246,7 @@ def _run_loop(
     iteration must log and retry next cycle, not silently kill the whole
     watch until a human notices."""
     print(
-        f"Watching every {args.interval}s — press Ctrl+C to stop.",
+        f"Vigilando cada {args.interval}s — presioná Ctrl+C para detener.",
         file=sys.stderr,
     )
     try:
@@ -208,23 +254,45 @@ def _run_loop(
             try:
                 _run_once(repository, client, args)
             except Exception as exc:  # noqa: BLE001 — keep an unattended watch alive
-                print(f"Unexpected error this run (continuing): {exc}", file=sys.stderr)
+                print(f"Error inesperado en esta corrida (continuando): {exc}", file=sys.stderr)
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        print("\nStopped by user.", file=sys.stderr)
+        print("\nDetenido por el usuario.", file=sys.stderr)
         return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Loads .env from the current/parent directories if present (never
+    # overrides an already-exported real env var). Called here, not at
+    # module import time, so importing this module for tests has no
+    # filesystem side effects. `find_dotenv(usecwd=True)`: search from the
+    # directory the command is actually run from — the plain `load_dotenv()`
+    # default searches from this installed package's own file location
+    # instead, which would never find a project-root .env for an
+    # editable/installed package.
+    load_dotenv(find_dotenv(usecwd=True))
+
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
     if args.interval is not None:
         if args.interval <= 0:
-            print("--interval must be a positive number of seconds", file=sys.stderr)
+            print("--interval debe ser un número positivo de segundos", file=sys.stderr)
             return 2
-        if args.history or args.list_current:
-            print("--interval cannot be combined with --history or --list", file=sys.stderr)
+        if args.list_current:
+            print("--interval no se puede combinar con --list", file=sys.stderr)
+            return 2
+
+    if args.telegram:
+        if args.list_current:
+            print("--telegram no se puede combinar con --list", file=sys.stderr)
+            return 2
+        if _telegram_credentials_from_env() is None:
+            print(
+                f"--telegram requiere que las variables de entorno {TELEGRAM_BOT_TOKEN_ENV} "
+                f"y {TELEGRAM_CHAT_ID_ENV} estén configuradas",
+                file=sys.stderr,
+            )
             return 2
 
     conn = connect(args.db)
@@ -233,25 +301,6 @@ def main(argv: list[str] | None = None) -> int:
     repository = SqliteOfferRepository(conn)
 
     try:
-        if args.history:
-            store_slug, separator, external_id = args.history.partition(":")
-            if not separator or not store_slug or not external_id:
-                print("Invalid --history value; expected STORE:EXTERNAL_ID", file=sys.stderr)
-                return 2
-            history = repository.price_history(store_slug, external_id)
-            if args.json:
-                print(json_module.dumps([_observation_to_json(h) for h in history], indent=2))
-            else:
-                for observation in history:
-                    price_text = (
-                        f"S/ {observation.price.amount:.2f}" if observation.price else "price not published"
-                    )
-                    print(
-                        f"{observation.observed_at.isoformat()} | {price_text} | "
-                        f"{observation.availability.value}"
-                    )
-            return 0
-
         if args.list_current:
             store_filter = args.stores[0] if args.stores else None
             entries = repository.current_listing(store_filter)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -66,9 +67,27 @@ def test_parse_products_non_array_raises_store_parse_error() -> None:
         parse_products("plaza_vea", '{"not": "a list"}', NOW, BASE_URL)
 
 
-def test_parse_products_missing_required_field_raises_store_parse_error() -> None:
-    with pytest.raises(StoreParseError):
-        parse_products("plaza_vea", '[{"productId": "1"}]', NOW, BASE_URL)
+def test_parse_products_skips_malformed_product_instead_of_raising(capsys) -> None:
+    """Regression (real Oechsle incident, 12 occurrences within a 20-minute
+    window, 2026-09-18): one malformed product must not lose every other
+    valid product on the same page."""
+    body = '[{"productId": "1"}]'  # missing productName/items/sellers/...
+    offers = parse_products("plaza_vea", body, NOW, BASE_URL)
+    assert offers == []
+    assert "skipping malformed product" in capsys.readouterr().err
+
+
+def test_parse_products_skips_only_the_malformed_entry(fixture_body, capsys) -> None:
+    """A malformed entry alongside otherwise-valid ones: only the bad one is
+    dropped, the rest still parse normally."""
+    body = fixture_body("plaza_vea", "search_page_1.json")
+    products = json.loads(body)
+    products.insert(1, {"productId": "broken-entry"})  # missing everything else
+    offers = parse_products("plaza_vea", json.dumps(products), NOW, BASE_URL)
+
+    assert "broken-entry" not in [o.external_id for o in offers]
+    assert len(offers) == len(products) - 1
+    assert "skipping malformed product" in capsys.readouterr().err
 
 
 def test_parse_products_oechsle_fixture(fixture_body) -> None:
@@ -77,3 +96,28 @@ def test_parse_products_oechsle_fixture(fixture_body) -> None:
     assert len(offers) == 2
     assert offers[0].store == "oechsle"
     assert offers[0].language is Language.ENGLISH
+
+
+def test_parse_products_metro_fixture(fixture_body) -> None:
+    """Live capture, 2026-09-28: query "pokemon 30 aniversario" matched one
+    unrelated generic Pokémon figure — no 30th-anniversary TCG product was
+    in Metro's catalog at capture time, same as several other stores at
+    various points in this project. Confirms the shared VTEX parser works
+    unchanged for a 5th VTEX storefront."""
+    body = fixture_body("metro", "search_page_1.json")
+    offers = parse_products("metro", body, NOW, "https://www.metro.pe")
+    assert len(offers) == 1
+    assert offers[0].store == "metro"
+    assert offers[0].external_id == "952148"
+
+
+def test_parse_products_wong_fixture(fixture_body) -> None:
+    """Live capture, 2026-09-28: same query, same product name as Metro's
+    fixture, but a DIFFERENT external_id — confirmed live these are
+    genuinely separate catalogs, not a shared backend, despite both being
+    Cencosud-Peru VTEX storefronts."""
+    body = fixture_body("wong", "search_page_1.json")
+    offers = parse_products("wong", body, NOW, "https://www.wong.pe")
+    assert len(offers) == 1
+    assert offers[0].store == "wong"
+    assert offers[0].external_id == "979185"

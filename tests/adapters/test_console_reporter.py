@@ -50,9 +50,9 @@ def test_mixed_events_are_all_shown(capsys) -> None:
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "NEW: New ETB" in out
-    assert "RESTOCKED: Restocked Box" in out
-    assert "PRICE_DROP: Cheaper Pack" in out
+    assert "NUEVO: New ETB" in out
+    assert "REABASTECIDO: Restocked Box" in out
+    assert "BAJA DE PRECIO: Cheaper Pack" in out
 
 
 def test_no_events_explicitly_states_no_changes(capsys) -> None:
@@ -66,7 +66,7 @@ def test_no_events_explicitly_states_no_changes(capsys) -> None:
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "No changes detected this run." in out
+    assert "Sin cambios en esta corrida." in out
 
 
 def test_events_and_baseline_lines_include_the_product_url(capsys) -> None:
@@ -123,8 +123,8 @@ def test_first_run_baseline_is_labeled_not_as_new(capsys) -> None:
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "initial baseline" in out
-    assert "NEW:" not in out
+    assert "línea base inicial" in out
+    assert "NUEVO:" not in out
 
 
 def test_one_store_baseline_alongside_another_store_new_not_conflated(capsys) -> None:
@@ -156,9 +156,9 @@ def test_one_store_baseline_alongside_another_store_new_not_conflated(capsys) ->
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "[ripley] initial baseline" in out
+    assert "[ripley] línea base inicial" in out
     assert "Ripley offer" in out
-    assert "[plaza_vea] NEW: Plaza Vea offer" in out
+    assert "[plaza_vea] NUEVO: Plaza Vea offer" in out
 
 
 def test_failed_store_is_called_out_distinctly_from_zero_matches(capsys) -> None:
@@ -172,8 +172,8 @@ def test_failed_store_is_called_out_distinctly_from_zero_matches(capsys) -> None
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "[ripley] FAILED: HTTP 403" in out
-    assert "[oechsle] ok, 0 matches" in out
+    assert "[ripley] ERROR: HTTP 403" in out
+    assert "[oechsle] ok, 0 coincidencias" in out
 
 
 def test_all_stores_failed_does_not_read_as_no_changes(capsys) -> None:
@@ -192,10 +192,10 @@ def test_all_stores_failed_does_not_read_as_no_changes(capsys) -> None:
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "No changes detected this run." not in out
-    assert "All 4 stores failed this run" in out
+    assert "Sin cambios en esta corrida." not in out
+    assert "Las 4 tiendas fallaron en esta corrida" in out
     for store in ("plaza_vea", "oechsle", "ripley", "ilahui"):
-        assert f"[{store}] FAILED:" in out
+        assert f"[{store}] ERROR:" in out
 
 
 def test_partial_failure_with_no_other_changes_still_says_no_changes(capsys) -> None:
@@ -212,8 +212,8 @@ def test_partial_failure_with_no_other_changes_still_says_no_changes(capsys) -> 
     )
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
-    assert "No changes detected this run." in out
-    assert "[ripley] FAILED: HTTP 403" in out
+    assert "Sin cambios en esta corrida." in out
+    assert "[ripley] ERROR: HTTP 403" in out
 
 
 def test_current_listing_view_prints_all_entries(capsys) -> None:
@@ -239,7 +239,7 @@ def test_current_listing_view_prints_all_entries(capsys) -> None:
 def test_current_listing_view_empty(capsys) -> None:
     ConsoleReporter().report_listing([])
     out = capsys.readouterr().out
-    assert "No current matching offers" in out
+    assert "No hay ofertas coincidentes" in out
 
 
 def test_color_is_disabled_by_default_under_pytest(capsys) -> None:
@@ -260,7 +260,7 @@ def test_color_is_disabled_by_default_under_pytest(capsys) -> None:
     ConsoleReporter().report(outcome)
     out = capsys.readouterr().out
     assert _HIGHLIGHT not in out
-    assert "NEW: ETB" in out
+    assert "NUEVO: ETB" in out
 
 
 def test_in_stock_offer_is_highlighted_when_color_forced_on(capsys) -> None:

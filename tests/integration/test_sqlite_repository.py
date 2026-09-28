@@ -1,6 +1,7 @@
-"""Real `sqlite3` on `tmp_path`: last_known/has_history/price_history
-semantics, FK cascade, per-store transaction isolation, append-only inserts,
-SKU/URL-change new-identity behavior."""
+"""Real `sqlite3` on `tmp_path`: last_known/has_history semantics, FK
+cascade, per-store transaction isolation, current-state-replaces-not-appends
+(user decision, 2026-09-28: no history retained, only latest state per
+product), SKU/URL-change new-identity behavior."""
 
 from __future__ import annotations
 
@@ -58,19 +59,19 @@ def test_has_history_is_scoped_per_store(tmp_db: sqlite3.Connection) -> None:
     assert repo.has_history("ripley") is False
 
 
-def test_last_known_picks_newest_across_multiple_runs(tmp_db: sqlite3.Connection) -> None:
+def test_last_known_reflects_the_most_recently_saved_state(tmp_db: sqlite3.Connection) -> None:
     repo = SqliteOfferRepository(tmp_db)
 
     run1 = repo.start_run(NOW)
-    repo.record_observations(run1, [_offer("p1", price="100.00", observed_at=NOW)])
+    repo.save_current_state(run1, [_offer("p1", price="100.00", observed_at=NOW)])
 
     run2_time = NOW + timedelta(days=1)
     run2 = repo.start_run(run2_time)
-    repo.record_observations(run2, [_offer("p1", price="90.00", observed_at=run2_time)])
+    repo.save_current_state(run2, [_offer("p1", price="90.00", observed_at=run2_time)])
 
     run3_time = NOW + timedelta(days=2)
     run3 = repo.start_run(run3_time)
-    repo.record_observations(run3, [_offer("p1", price="80.00", observed_at=run3_time)])
+    repo.save_current_state(run3, [_offer("p1", price="80.00", observed_at=run3_time)])
 
     last_known = repo.last_known("plaza_vea")
     assert last_known["p1"].price is not None
@@ -78,44 +79,34 @@ def test_last_known_picks_newest_across_multiple_runs(tmp_db: sqlite3.Connection
     assert last_known["p1"].observed_at == run3_time
 
 
-def test_price_history_returns_all_observations_in_chronological_order(
+def test_save_current_state_replaces_not_appends(tmp_db: sqlite3.Connection) -> None:
+    """User decision, 2026-09-28: no history is retained — a product's
+    `current_state` row is REPLACED on every run, never appended to.
+    Regression for the earlier append-only design, which accumulated ~7,000
+    rows for 12 products over 4 days of unattended running, none of which
+    was ever read back."""
+    repo = SqliteOfferRepository(tmp_db)
+    run1 = repo.start_run(NOW)
+    repo.save_current_state(run1, [_offer("p1")])
+    run2_time = NOW + timedelta(days=1)
+    run2 = repo.start_run(run2_time)
+    repo.save_current_state(run2, [_offer("p1", observed_at=run2_time)])
+
+    count = tmp_db.execute("SELECT COUNT(*) AS c FROM current_state").fetchone()["c"]
+    assert count == 1
+
+
+def test_fk_cascade_deletes_current_state_when_owning_run_deleted(
     tmp_db: sqlite3.Connection,
 ) -> None:
     repo = SqliteOfferRepository(tmp_db)
-    prices = ["100.00", "95.00", "90.00", "85.00", "80.00"]
-    for i, price in enumerate(prices):
-        t = NOW + timedelta(days=i)
-        run_id = repo.start_run(t)
-        repo.record_observations(run_id, [_offer("p1", price=price, observed_at=t)])
-
-    history = repo.price_history("plaza_vea", "p1")
-    assert len(history) == 5
-    assert [h.price.amount for h in history] == [Decimal(p) for p in prices]
-    # strictly ascending timestamps -> chronological order
-    assert all(history[i].observed_at < history[i + 1].observed_at for i in range(4))
-
-
-def test_record_observations_is_append_only(tmp_db: sqlite3.Connection) -> None:
-    repo = SqliteOfferRepository(tmp_db)
-    run1 = repo.start_run(NOW)
-    repo.record_observations(run1, [_offer("p1")])
-    run2_time = NOW + timedelta(days=1)
-    run2 = repo.start_run(run2_time)
-    repo.record_observations(run2, [_offer("p1", observed_at=run2_time)])
-
-    count = tmp_db.execute("SELECT COUNT(*) AS c FROM observation").fetchone()["c"]
-    assert count == 2
-
-
-def test_fk_cascade_deletes_observations_when_run_deleted(tmp_db: sqlite3.Connection) -> None:
-    repo = SqliteOfferRepository(tmp_db)
     run_id = repo.start_run(NOW)
-    repo.record_observations(run_id, [_offer("p1")])
+    repo.save_current_state(run_id, [_offer("p1")])
 
     tmp_db.execute("DELETE FROM run WHERE id = ?", (run_id,))
     tmp_db.commit()
 
-    count = tmp_db.execute("SELECT COUNT(*) AS c FROM observation").fetchone()["c"]
+    count = tmp_db.execute("SELECT COUNT(*) AS c FROM current_state").fetchone()["c"]
     assert count == 0
 
 
@@ -126,10 +117,10 @@ def test_per_store_transaction_isolation_one_store_failure_does_not_lose_another
     run_id = repo.start_run(NOW)
 
     # Plaza Vea succeeds and commits.
-    repo.record_observations(run_id, [_offer("p1", store="plaza_vea")])
+    repo.save_current_state(run_id, [_offer("p1", store="plaza_vea")])
     repo.record_store_run(run_id, "plaza_vea", "ok", 1, None)
 
-    # Ripley "fails" — the use case would never call record_observations for
+    # Ripley "fails" — the use case would never call save_current_state for
     # it; simulate that directly and record the failure.
     repo.record_store_run(run_id, "ripley", "failed", 0, "HTTP 403")
 
@@ -143,23 +134,25 @@ def test_sku_url_change_yields_new_product_identity(tmp_db: sqlite3.Connection) 
     repo = SqliteOfferRepository(tmp_db)
 
     run1 = repo.start_run(NOW)
-    repo.record_observations(
+    repo.save_current_state(
         run1,
         [_offer("old-sku", url="https://example.test/old-url", price="100.00", observed_at=NOW)],
     )
 
     run2_time = NOW + timedelta(days=1)
     run2 = repo.start_run(run2_time)
-    repo.record_observations(
+    repo.save_current_state(
         run2,
-        [_offer("new-sku", url="https://example.test/new-url", price="100.00", observed_at=run2_time)],
+        [_offer("new-sku", url="https://example.test/new-url", price="120.00", observed_at=run2_time)],
     )
 
-    old_history = repo.price_history("plaza_vea", "old-sku")
-    new_history = repo.price_history("plaza_vea", "new-sku")
-
-    assert len(old_history) == 1  # unaffected, independent identity
-    assert len(new_history) == 1  # fresh, empty-start identity
+    last_known = repo.last_known("plaza_vea")
+    # Both identities coexist independently — a URL/SKU change doesn't merge
+    # or overwrite the old product row, it creates a fresh one alongside it.
+    assert last_known["old-sku"].price is not None
+    assert last_known["old-sku"].price.amount == Decimal("100.00")
+    assert last_known["new-sku"].price is not None
+    assert last_known["new-sku"].price.amount == Decimal("120.00")
 
 
 def test_current_listing_returns_latest_per_product_across_stores(
@@ -167,7 +160,7 @@ def test_current_listing_returns_latest_per_product_across_stores(
 ) -> None:
     repo = SqliteOfferRepository(tmp_db)
     run_id = repo.start_run(NOW)
-    repo.record_observations(
+    repo.save_current_state(
         run_id,
         [
             _offer("p1", store="plaza_vea", title="Plaza Vea Offer"),
@@ -183,7 +176,7 @@ def test_current_listing_returns_latest_per_product_across_stores(
 def test_current_listing_filters_by_store(tmp_db: sqlite3.Connection) -> None:
     repo = SqliteOfferRepository(tmp_db)
     run_id = repo.start_run(NOW)
-    repo.record_observations(
+    repo.save_current_state(
         run_id,
         [
             _offer("p1", store="plaza_vea"),

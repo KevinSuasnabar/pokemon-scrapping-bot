@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -19,6 +20,7 @@ from tracker.application.dto import RawPayload
 from tracker.domain.errors import StoreFetchError, StoreParseError
 from tracker.domain.matching import detect_language, detect_product_type
 from tracker.domain.model import Availability, Money, Offer
+from tracker.infrastructure.http.client import get_with_retry
 
 #: VTEX paginates in blocks of 50; stop after this many pages even if the
 #: catalog claims more (design.md "Pagination (VTEX)").
@@ -115,7 +117,16 @@ def _parse_one_product(store_slug: str, product: dict[str, object], observed_at:
 def parse_products(
     store_slug: str, body: str, observed_at: datetime, base_url: str = ""
 ) -> list[Offer]:
-    """Pure: a JSON array of VTEX product dicts -> `Offer`s. No network."""
+    """Pure (aside from a stderr warning on a skipped entry — same tradeoff
+    `_run_loop`/`TelegramReporter` already make elsewhere in this codebase):
+    a JSON array of VTEX product dicts -> `Offer`s. No network.
+
+    A single malformed product is skipped, not a page-level failure: real
+    Oechsle data was observed (12 occurrences within a 20-minute window,
+    2026-09-18) missing `items[0].sellers` on one product while the rest of
+    the page was fine — losing every other valid product to one bad entry
+    is worse than just skipping it.
+    """
     try:
         products = json.loads(body)
     except json.JSONDecodeError as exc:
@@ -124,7 +135,13 @@ def parse_products(
     if not isinstance(products, list):
         raise StoreParseError(f"{store_slug}: expected a JSON array of products")
 
-    return [_parse_one_product(store_slug, product, observed_at, base_url) for product in products]
+    offers: list[Offer] = []
+    for product in products:
+        try:
+            offers.append(_parse_one_product(store_slug, product, observed_at, base_url))
+        except StoreParseError as exc:
+            print(f"{store_slug}: skipping malformed product: {exc}", file=sys.stderr)
+    return offers
 
 
 class VtexStoreAdapter:
@@ -149,8 +166,7 @@ class VtexStoreAdapter:
         for _page in range(MAX_PAGES):
             url = self._search_url(query, offset)
             try:
-                response = self._client.get(url)
-                response.raise_for_status()
+                response = get_with_retry(self._client, url)
             except httpx.HTTPError as exc:
                 raise StoreFetchError(f"{self.store_slug}: request to {url} failed: {exc}") from exc
 

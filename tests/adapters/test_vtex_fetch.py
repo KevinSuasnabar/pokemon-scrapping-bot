@@ -12,6 +12,14 @@ from tracker.domain.errors import StoreFetchError
 BASE_URL = "https://www.plazavea.com.pe"
 
 
+@pytest.fixture(autouse=True)
+def _no_real_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`get_with_retry` (infrastructure/http/client.py) sleeps between
+    attempts in real usage — tests exercising an error path must not
+    actually wait for it."""
+    monkeypatch.setattr("tracker.infrastructure.http.client.time.sleep", lambda seconds: None)
+
+
 def _client_with_handler(handler) -> httpx.Client:
     return httpx.Client(transport=httpx.MockTransport(handler), headers={"User-Agent": "test-agent"})
 

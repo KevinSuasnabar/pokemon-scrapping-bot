@@ -1,7 +1,7 @@
 """**Load-bearing regression test** (design.md "Data Flow" / tasks.md 7.2).
 
 Asserts `repo.last_known()` / `repo.has_history()` are read for a store
-BEFORE `repo.record_observations()` writes that store's current-run data.
+BEFORE `repo.save_current_state()` writes that store's current-run data.
 A spy repository fails the test if a read happens after the write for the
 same store — without this ordering, every product would diff against
 itself and NEW/RESTOCKED/PRICE_DROP would never fire.
@@ -30,7 +30,7 @@ class OrderingViolation(AssertionError):
 @dataclass
 class OrderTrackingRepository:
     """Fails the moment a store's read (`last_known`/`has_history`) happens
-    after that same store's `record_observations` write."""
+    after that same store's `save_current_state` write."""
 
     written_stores: set[str] = field(default_factory=set)
     read_log: list[str] = field(default_factory=list)
@@ -51,7 +51,7 @@ class OrderTrackingRepository:
         self.read_log.append(store)
         if store in self.written_stores:
             raise OrderingViolation(
-                f"has_history({store!r}) called AFTER record_observations({store!r}) — "
+                f"has_history({store!r}) called AFTER save_current_state({store!r}) — "
                 "every product would diff against itself."
             )
         return False
@@ -60,18 +60,15 @@ class OrderTrackingRepository:
         self.read_log.append(store)
         if store in self.written_stores:
             raise OrderingViolation(
-                f"last_known({store!r}) called AFTER record_observations({store!r}) — "
+                f"last_known({store!r}) called AFTER save_current_state({store!r}) — "
                 "every product would diff against itself."
             )
         return {}
 
-    def record_observations(self, run_id: int, offers) -> None:
+    def save_current_state(self, run_id: int, offers) -> None:
         for offer in offers:
             self.written_stores.add(offer.store)
             self.write_log.append(offer.store)
-
-    def price_history(self, store: str, external_id: str, limit: int = 50):
-        return []
 
     def current_listing(self, store: str | None = None):
         return []
@@ -124,7 +121,7 @@ class _FakeAdapter:
         return self.parse(self.fetch(query), observed_at)
 
 
-def test_last_known_and_has_history_read_before_record_observations_write() -> None:
+def test_last_known_and_has_history_read_before_save_current_state_write() -> None:
     repo = OrderTrackingRepository()
     use_case = TrackOffersUseCase(
         adapters=[_FakeAdapter("plaza_vea")],

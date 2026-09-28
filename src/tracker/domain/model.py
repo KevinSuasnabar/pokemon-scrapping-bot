@@ -28,6 +28,13 @@ class Availability(StrEnum):
     UNKNOWN = "unknown"
 
 
+def is_in_stock(availability: Availability | None) -> bool:
+    """Shared "is this worth alerting on right now" predicate — used by every
+    `Reporter` implementation (console highlighting, Telegram notifications)
+    so they all agree on exactly one definition of "available"."""
+    return availability is Availability.IN_STOCK
+
+
 class ProductType(StrEnum):
     ETB = "etb"
     BOOSTER_BOX = "booster_box"

@@ -14,6 +14,7 @@ from tracker.domain.model import (
     Money,
     Offer,
     ProductType,
+    is_in_stock,
 )
 
 
@@ -64,3 +65,16 @@ def test_offer_key_is_store_and_external_id() -> None:
         observed_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     assert offer.key == ("plaza_vea", "12345")
+
+
+@pytest.mark.parametrize(
+    ("availability", "expected"),
+    [
+        (Availability.IN_STOCK, True),
+        (Availability.OUT_OF_STOCK, False),
+        (Availability.UNKNOWN, False),
+        (None, False),
+    ],
+)
+def test_is_in_stock(availability: Availability | None, expected: bool) -> None:
+    assert is_in_stock(availability) is expected

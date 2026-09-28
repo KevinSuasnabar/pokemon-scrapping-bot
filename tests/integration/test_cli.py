@@ -1,4 +1,4 @@
-"""CLI integration: exit-code matrix, `--json` output shape, `--history` flag.
+"""CLI integration: exit-code matrix, `--json` output shape, `--list` flag.
 
 Network is faked at the `httpx.Client` transport level (via monkeypatched
 adapter factories), matching the project's "no live network in tests" rule.
@@ -129,25 +129,6 @@ def test_json_output_is_the_only_stdout_content(monkeypatch, db_path: str, capsy
     json.loads(out)  # must parse as a single JSON document, no console text mixed in
 
 
-def test_history_flag_returns_price_history(monkeypatch, db_path: str, capsys) -> None:
-    _patch_all_ok(monkeypatch)
-    cli_main.main(["--db", db_path])  # run once to populate history
-    capsys.readouterr()
-
-    exit_code = cli_main.main(["--db", db_path, "--history", "plaza_vea:p1", "--json"])
-    out = capsys.readouterr().out
-    assert exit_code == 0
-    history = json.loads(out)
-    assert len(history) == 1
-    assert history[0]["price"] == "99.9"
-    assert history[0]["availability"] == "in_stock"
-
-
-def test_history_flag_invalid_value_returns_exit_code_two(db_path: str, capsys) -> None:
-    exit_code = cli_main.main(["--db", db_path, "--history", "invalid-value"])
-    assert exit_code == 2
-
-
 def test_list_flag_reads_current_listing_without_network(monkeypatch, db_path: str, capsys) -> None:
     _patch_all_ok(monkeypatch)
     cli_main.main(["--db", db_path])  # populate
@@ -163,15 +144,7 @@ def test_list_flag_reads_current_listing_without_network(monkeypatch, db_path: s
 def test_interval_rejects_non_positive_value(db_path: str, capsys) -> None:
     exit_code = cli_main.main(["--db", db_path, "--interval", "0"])
     assert exit_code == 2
-    assert "positive" in capsys.readouterr().err
-
-
-def test_interval_cannot_combine_with_history(db_path: str, capsys) -> None:
-    exit_code = cli_main.main(
-        ["--db", db_path, "--interval", "5", "--history", "plaza_vea:p1"]
-    )
-    assert exit_code == 2
-    assert "--interval" in capsys.readouterr().err
+    assert "positivo" in capsys.readouterr().err
 
 
 def test_interval_cannot_combine_with_list(db_path: str, capsys) -> None:
@@ -201,8 +174,8 @@ def test_interval_loop_runs_repeatedly_until_keyboard_interrupt(
     assert exit_code == 0
     assert sleep_calls == [7, 7, 7]  # ran 3 times before being interrupted
     out = capsys.readouterr()
-    assert out.out.count("Run #") == 3  # each iteration printed its own run report
-    assert "Stopped by user" in out.err
+    assert out.out.count("Corrida #") == 3  # each iteration printed its own run report
+    assert "Detenido por el usuario" in out.err
 
 
 def test_interval_loop_survives_an_unexpected_exception_mid_run(
@@ -238,8 +211,97 @@ def test_interval_loop_survives_an_unexpected_exception_mid_run(
     assert exit_code == 0  # the loop itself still exits cleanly via Ctrl+C
     assert call_count == 3  # run 2's crash didn't stop run 3 from happening
     err = capsys.readouterr().err
-    assert "Unexpected error this run (continuing): simulated unexpected failure" in err
-    assert "Stopped by user" in err
+    assert "Error inesperado en esta corrida (continuando): simulated unexpected failure" in err
+    assert "Detenido por el usuario" in err
+
+
+def test_dotenv_file_is_loaded_for_telegram_credentials(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    """Regression: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID should be readable
+    from a .env file, not just real shell-exported env vars."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    (tmp_path / ".env").write_text("TELEGRAM_BOT_TOKEN=dotenv-token\nTELEGRAM_CHAT_ID=dotenv-chat\n")
+    monkeypatch.chdir(tmp_path)
+
+    sent_outcomes = []
+
+    class _FakeTelegramReporter:
+        def __init__(self, client, bot_token, chat_id) -> None:
+            assert bot_token == "dotenv-token"
+            assert chat_id == "dotenv-chat"
+
+        def report(self, outcome) -> None:
+            sent_outcomes.append(outcome)
+
+        def report_listing(self, entries) -> None:
+            pass
+
+    monkeypatch.setattr(cli_main, "TelegramReporter", _FakeTelegramReporter)
+    monkeypatch.setattr(
+        cli_main,
+        "_build_adapters",
+        lambda client, store_filter: [_FakeAdapter("plaza_vea")],
+    )
+
+    exit_code = cli_main.main(["--db", "cli_test.db", "--telegram"])
+
+    assert exit_code == 0
+    assert len(sent_outcomes) == 1
+
+
+def test_telegram_requires_env_vars(monkeypatch, db_path: str, tmp_path: Path, capsys) -> None:
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    # Isolate from any real .env this developer's own project root may have
+    # (load_dotenv() would otherwise silently repopulate the vars just
+    # deleted above, from a .env in a parent directory of the real cwd).
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli_main.main(["--db", db_path, "--telegram"])
+    assert exit_code == 2
+    assert "TELEGRAM_BOT_TOKEN" in capsys.readouterr().err
+
+
+def test_telegram_cannot_combine_with_list(monkeypatch, db_path: str, capsys) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+    exit_code = cli_main.main(["--db", db_path, "--telegram", "--list"])
+    assert exit_code == 2
+    assert "--telegram" in capsys.readouterr().err
+
+
+def test_telegram_sends_via_composite_reporter_when_configured(
+    monkeypatch, db_path: str, capsys
+) -> None:
+    """The CLI wires ConsoleReporter + TelegramReporter through
+    CompositeReporter under --telegram: console output must still happen,
+    and the (faked) Telegram side must receive the same in-stock event."""
+    _patch_all_ok(monkeypatch)  # _FakeAdapter always returns an IN_STOCK offer
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+
+    sent_outcomes = []
+
+    class _FakeTelegramReporter:
+        def __init__(self, client, bot_token, chat_id) -> None:
+            assert bot_token == "fake-token"
+            assert chat_id == "fake-chat-id"
+
+        def report(self, outcome) -> None:
+            sent_outcomes.append(outcome)
+
+        def report_listing(self, entries) -> None:
+            pass
+
+    monkeypatch.setattr(cli_main, "TelegramReporter", _FakeTelegramReporter)
+
+    exit_code = cli_main.main(["--db", db_path, "--telegram"])
+
+    assert exit_code == 0
+    assert len(sent_outcomes) == 1
+    out = capsys.readouterr().out
+    assert "Corrida #" in out  # console output still happened alongside Telegram
 
 
 def test_db_file_is_created(monkeypatch, db_path: str, capsys) -> None:
@@ -251,4 +313,4 @@ def test_db_file_is_created(monkeypatch, db_path: str, capsys) -> None:
         row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     conn.close()
-    assert {"store", "run", "store_run", "product", "observation"} <= tables
+    assert {"store", "run", "store_run", "product", "current_state"} <= tables

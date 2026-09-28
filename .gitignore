@@ -21,6 +21,9 @@ tracker.db
 *.db-wal
 *.db-shm
 
+# Secrets
+.env
+
 # Editor
 .vscode/
 .idea/
