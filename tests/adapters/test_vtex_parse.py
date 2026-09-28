@@ -111,6 +111,77 @@ def test_parse_products_metro_fixture(fixture_body) -> None:
     assert offers[0].external_id == "952148"
 
 
+def _product_with_sellers(sellers: list[dict[str, object]], product_id: str = "999") -> str:
+    return json.dumps(
+        [
+            {
+                "productId": product_id,
+                "productName": "Pokemon TCG 30 Aniversario ETB En Ingles",
+                "linkText": "some-product",
+                "items": [{"sellers": sellers}],
+            }
+        ]
+    )
+
+
+def test_parse_products_prefers_direct_seller_over_marketplace_default(fixture_body) -> None:
+    """Regression, confirmed live on Oechsle 2026-09-28: a marketplace seller
+    can appear FIRST in the `sellers` array (`sellerDefault: true`) ahead of
+    the store's own listing — sellerId "1" must always win regardless of
+    array order."""
+    body = _product_with_sellers(
+        [
+            {
+                "sellerId": "COMPRAFACILEXPRESS",
+                "sellerName": "COMPRAFACIL EXPRESS",
+                "sellerDefault": True,
+                "commertialOffer": {"Price": 965.0, "AvailableQuantity": 25},
+            },
+            {
+                "sellerId": "1",
+                "sellerName": "oechsle",
+                "sellerDefault": False,
+                "commertialOffer": {"Price": 189.9, "AvailableQuantity": 3},
+            },
+        ]
+    )
+    offers = parse_products("oechsle", body, NOW, "https://www.oechsle.pe")
+    assert len(offers) == 1
+    assert offers[0].price is not None
+    assert offers[0].price.amount == Decimal("189.9")
+    assert offers[0].availability is Availability.IN_STOCK
+
+
+def test_parse_products_skips_marketplace_only_listing() -> None:
+    """A product Oechsle doesn't carry itself at all (no sellerId "1" entry)
+    is a pure marketplace resale — same philosophy as Ripley/Falabella's
+    marketplace filter: skip it, don't report the reseller's price as the
+    store's own."""
+    body = _product_with_sellers(
+        [
+            {
+                "sellerId": "COMPRAFACILEXPRESS",
+                "sellerName": "COMPRAFACIL EXPRESS",
+                "commertialOffer": {"Price": 369.0, "AvailableQuantity": 25},
+            }
+        ]
+    )
+    offers = parse_products("oechsle", body, NOW, "https://www.oechsle.pe")
+    assert offers == []
+
+
+def test_parse_products_direct_seller_zero_price_is_not_published() -> None:
+    """A direct seller with no stock reports `Price: 0` alongside
+    `AvailableQuantity: 0` — that's "not offered", not a real S/ 0.00 price."""
+    body = _product_with_sellers(
+        [{"sellerId": "1", "sellerName": "oechsle", "commertialOffer": {"Price": 0, "AvailableQuantity": 0}}]
+    )
+    offers = parse_products("oechsle", body, NOW, "https://www.oechsle.pe")
+    assert len(offers) == 1
+    assert offers[0].price is None
+    assert offers[0].availability is Availability.OUT_OF_STOCK
+
+
 def test_parse_products_wong_fixture(fixture_body) -> None:
     """Live capture, 2026-09-28: same query, same product name as Metro's
     fixture, but a DIFFERENT external_id — confirmed live these are

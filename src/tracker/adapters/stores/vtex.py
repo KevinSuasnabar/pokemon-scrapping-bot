@@ -51,9 +51,15 @@ def _extract_price(commertial_offer: dict[str, object]) -> Money | None:
     if price is None:
         return None
     try:
-        return Money(amount=Decimal(str(price)), currency="PEN")
+        amount = Decimal(str(price))
     except InvalidOperation as exc:
         raise StoreParseError(f"invalid VTEX price value: {price!r}") from exc
+    if amount <= 0:
+        # A direct seller with no stock reports `Price: 0` (confirmed live,
+        # 2026-09-28, alongside the marketplace-seller fix above) — that's
+        # "not offered", not a real S/ 0.00 price.
+        return None
+    return Money(amount=amount, currency="PEN")
 
 
 def _extract_availability(commertial_offer: dict[str, object]) -> Availability:
@@ -63,6 +69,25 @@ def _extract_availability(commertial_offer: dict[str, object]) -> Availability:
     if commertial_offer.get("IsAvailable"):
         return Availability.IN_STOCK
     return Availability.OUT_OF_STOCK
+
+
+#: VTEX reserves sellerId "1" for the storefront's own first-party seller;
+#: any other sellerId is a marketplace reseller (same platform convention
+#: Falabella's `_DIRECT_SELLER_ID` filter and Ripley's `seller == "MARKETPLACE"`
+#: check target on their own APIs). Confirmed live, 2026-09-28: 22/50 sampled
+#: Pokemon products on Oechsle (1/50 on Plaza Vea) list a marketplace seller
+#: FIRST — with `sellerDefault: true` and real price/quantity — and the
+#: store's own listing second, at `Price: 0, AvailableQuantity: 0`. Taking
+#: `sellers[0]` unconditionally (the pre-fix behavior) silently reported the
+#: marketplace's price and stock as if they were the retailer's own.
+_DIRECT_SELLER_ID = "1"
+
+
+def _select_direct_seller(sellers: list[dict[str, object]]) -> dict[str, object] | None:
+    for seller in sellers:
+        if seller.get("sellerId") == _DIRECT_SELLER_ID:
+            return seller
+    return None
 
 
 def _extract_attributes(product: dict[str, object]) -> dict[str, list[str]]:
@@ -76,17 +101,31 @@ def _extract_attributes(product: dict[str, object]) -> dict[str, list[str]]:
     return attributes
 
 
-def _parse_one_product(store_slug: str, product: dict[str, object], observed_at: datetime, base_url: str) -> Offer:
+def _parse_one_product(
+    store_slug: str, product: dict[str, object], observed_at: datetime, base_url: str
+) -> Offer | None:
+    """`None` means "this product has no direct-retailer offer" (marketplace-
+    only listing) — the caller skips it, same as a malformed entry, but it's
+    not an error: the store simply doesn't sell it itself."""
     try:
         external_id = str(product["productId"])
         title = str(product["productName"])
         items = product["items"]
         item = items[0]  # type: ignore[index]
         sellers = item["sellers"]
-        seller = sellers[0]
-        commertial_offer = seller["commertialOffer"]
     except (KeyError, IndexError, TypeError) as exc:
         raise StoreParseError(f"{store_slug}: malformed VTEX product entry: {exc}") from exc
+
+    seller = _select_direct_seller(sellers)
+    if seller is None:
+        return None
+
+    try:
+        commertial_offer = seller["commertialOffer"]
+    except (KeyError, TypeError) as exc:
+        raise StoreParseError(f"{store_slug}: malformed VTEX product entry: {exc}") from exc
+    if not isinstance(commertial_offer, dict):
+        raise StoreParseError(f"{store_slug}: malformed VTEX product entry: commertialOffer is not an object")
 
     link = product.get("link")
     if isinstance(link, str) and link:
@@ -138,9 +177,12 @@ def parse_products(
     offers: list[Offer] = []
     for product in products:
         try:
-            offers.append(_parse_one_product(store_slug, product, observed_at, base_url))
+            offer = _parse_one_product(store_slug, product, observed_at, base_url)
         except StoreParseError as exc:
             print(f"{store_slug}: skipping malformed product: {exc}", file=sys.stderr)
+            continue
+        if offer is not None:
+            offers.append(offer)
     return offers
 
 
