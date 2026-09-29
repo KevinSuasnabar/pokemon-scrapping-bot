@@ -41,7 +41,14 @@ _PRODUCT_TYPE_RULES: tuple[tuple[tuple[str, ...], ProductType], ...] = (
         # otherwise fall through to OTHER and be silently excluded — same
         # real product line as the Plaza Vea "Colección ... Tech Sticker"
         # case the user already confirmed they want included.
-        ("box", "collection", "coleccion", "caja", "sticker"),
+        #
+        # "mini tin" (not bare "tin"): added ahead of the 2026-10-02 "30th
+        # Celebration Mini Tin" release, confirmed via the official product
+        # name search — bare "tin" would false-positive on any title
+        # containing "Argentina" (`argen-TIN-a`), so the full two-word phrase
+        # is required, same defensive pattern as "lata coleccionable" instead
+        # of bare "lata" (would collide with "plata"/"plataforma").
+        ("box", "collection", "coleccion", "caja", "sticker", "mini tin", "lata coleccionable"),
         ProductType.COLLECTION_BOX,
     ),
 )
@@ -56,6 +63,18 @@ _ANNIVERSARY_MARKERS: tuple[str, ...] = (
     # live against real product titles during Phase 4.
     "30.o aniversario",
     "30o aniversario",
+    # "30th Celebration" is this collection's own official set name on some
+    # retailers (confirmed live, 2026-09-28: an Oechsle listing titled
+    # "...Legendary Birds 30th Celebration Pokémon TCG Inglés..." was silently
+    # excluded — parsed fine, filtered out here). Deliberately paired with
+    # "30", never bare "celebration": Pokémon TCG has a real, DIFFERENT
+    # "Celebrations" set for the 25th anniversary — matching "celebration"
+    # alone would wrongly pull that unrelated product in.
+    "30th celebration",
+    "30 celebration",
+    "celebration 30",
+    "30 celebracion",
+    "celebracion 30",
 )
 
 _NON_TCG_NOISE_MARKERS: tuple[str, ...] = (

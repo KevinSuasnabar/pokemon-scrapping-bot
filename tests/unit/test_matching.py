@@ -97,6 +97,15 @@ def test_detect_language_unrelated_attributes_fall_back_to_title() -> None:
         ("POKÉMON TCG 30.º ANIVERSARIO – PÓSTER COLECCIONABLE EN INGLÉS", ProductType.COLLECTION_BOX),
         ("POKÉMON TCG 30.º ANIVERSARIO – EX BOX AZUL EN INGLÉS", ProductType.COLLECTION_BOX),
         ("POKÉMON TCG 30.º ANIVERSARIO – ELITE TRAINER BOX (ETB) EN INGLÉS", ProductType.ETB),
+        # Upcoming releases (confirmed official product names, 2026-09-28):
+        # 30th Celebration Booster Bundle and Mini Tin, both releasing
+        # 2026-10-02.
+        ("Pokémon TCG: 30th Celebration Booster Bundle (6 Packs) En Inglés", ProductType.BOOSTER_PACK),
+        ("Pokémon TCG: 30th Celebration Mini Tin En Inglés", ProductType.COLLECTION_BOX),
+        # Trap: bare "tin" would false-positive on "Argentina" — the marker
+        # must require the full "mini tin" phrase, not just "tin".
+        ("Pokemon TCG 30th Celebration Booster Pack Importado De Argentina", ProductType.BOOSTER_PACK),
+        ("Distribuidor Oficial Argentina Pokemon TCG Merch", ProductType.OTHER),
     ],
 )
 def test_detect_product_type(title: str, expected: ProductType) -> None:
@@ -118,6 +127,16 @@ def test_is_non_tcg_noise_does_not_flag_tcg_branded_sticker_collection() -> None
         ("Pokemon TCG Aniversario 30 Box", True),
         ("Pokemon Center Bolsa De Papel 25 Aniversario Japon", False),
         ("Pokemon TCG Prismatic Sobre Español", False),
+        # Regression, confirmed live 2026-09-28: a real Oechsle listing
+        # ("...Legendary Birds 30th Celebration Pokémon TCG Inglés...") used
+        # the set's own official name, "Celebration", instead of the word
+        # "Anniversary" — it was silently filtered out despite matching
+        # every other criterion.
+        ("Colección con Póster Collection Legendary Birds 30th Celebration Pokémon TCG Inglés", True),
+        ("Pokemon TCG Celebration 30 Blister En Ingles", True),
+        # Trap: Pokémon TCG has a real, DIFFERENT "Celebrations" set for the
+        # 25th anniversary — bare "celebration" must never match on its own.
+        ("Pokemon TCG Celebrations Elite Trainer Box En Ingles", False),
     ],
 )
 def test_is_anniversary(title: str, expected: bool) -> None:
