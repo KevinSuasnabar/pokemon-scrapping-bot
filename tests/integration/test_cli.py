@@ -141,6 +141,15 @@ def test_list_flag_reads_current_listing_without_network(monkeypatch, db_path: s
     assert len(entries) == 4  # one per store
 
 
+def test_jittered_interval_stays_within_plus_minus_25_percent() -> None:
+    """Regression, confirmed live 2026-09-29: Ripley's Cloudflare blocked the
+    whole domain after ~12 minutes of a perfectly regular 20s cadence — the
+    jitter must actually vary the sleep, not just decorate the help text."""
+    values = [cli_main._jittered_interval(20) for _ in range(200)]
+    assert all(15.0 <= v <= 25.0 for v in values)
+    assert len(set(values)) > 1  # genuinely randomized, not a constant
+
+
 def test_interval_rejects_non_positive_value(db_path: str, capsys) -> None:
     exit_code = cli_main.main(["--db", db_path, "--interval", "0"])
     assert exit_code == 2
@@ -160,9 +169,9 @@ def test_interval_loop_runs_repeatedly_until_keyboard_interrupt(
     something (user's explicit choice) — only a manual interrupt (Ctrl+C,
     surfaced here as `time.sleep` raising `KeyboardInterrupt`) stops it."""
     _patch_all_ok(monkeypatch)
-    sleep_calls: list[int] = []
+    sleep_calls: list[float] = []
 
-    def _fake_sleep(seconds: int) -> None:
+    def _fake_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
         if len(sleep_calls) >= 3:
             raise KeyboardInterrupt
@@ -172,7 +181,9 @@ def test_interval_loop_runs_repeatedly_until_keyboard_interrupt(
     exit_code = cli_main.main(["--db", db_path, "--interval", "7"])
 
     assert exit_code == 0
-    assert sleep_calls == [7, 7, 7]  # ran 3 times before being interrupted
+    assert len(sleep_calls) == 3  # ran 3 times before being interrupted
+    # Jitter (±25%): never the exact configured value, always within range.
+    assert all(7 * 0.75 <= s <= 7 * 1.25 for s in sleep_calls)
     out = capsys.readouterr()
     assert out.out.count("Corrida #") == 3  # each iteration printed its own run report
     assert "Detenido por el usuario" in out.err

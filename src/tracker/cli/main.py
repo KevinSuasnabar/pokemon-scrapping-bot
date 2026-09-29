@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json as json_module
 import os
+import random
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -56,6 +57,19 @@ ALL_STORE_SLUGS: tuple[str, ...] = (
     "metro",
     "wong",
 )
+
+#: ±25% around the configured `--interval`. Confirmed live, 2026-09-29:
+#: Ripley's Cloudflare bot-management blocked the whole domain (403 on every
+#: page, not just search) after ~12 minutes of a perfectly regular 20s
+#: cadence hitting the same 2 default queries — a real human never re-checks
+#: a page at the exact same second every time, so that mechanical regularity
+#: is itself a bot signal, independent of request volume.
+_INTERVAL_JITTER_FRACTION = 0.25
+
+
+def _jittered_interval(interval: int) -> float:
+    spread = interval * _INTERVAL_JITTER_FRACTION
+    return random.uniform(interval - spread, interval + spread)
 
 
 class SystemClock:
@@ -116,8 +130,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="SECONDS",
         help=(
-            "Run continuously, waiting this many seconds between runs, "
-            "until interrupted with Ctrl+C. Omit to run once and exit."
+            "Run continuously, waiting approximately this many seconds "
+            "(±25%%, randomized, to avoid a bot-like fixed cadence) between "
+            "runs, until interrupted with Ctrl+C. Omit to run once and exit."
         ),
     )
     parser.add_argument(
@@ -283,7 +298,7 @@ def _run_loop(
                 if telegram is not None:
                     telegram.send_text(notice)
 
-            time.sleep(args.interval)
+            time.sleep(_jittered_interval(args.interval))
     except KeyboardInterrupt:
         print("\nDetenido por el usuario.", file=sys.stderr)
         return 0

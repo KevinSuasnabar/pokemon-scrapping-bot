@@ -10,6 +10,14 @@ Group=tracker
 WorkingDirectory=/opt/pokemon-tracker
 # `.env` is loaded by the app itself (python-dotenv, cwd-relative) — no
 # EnvironmentFile= needed here, same behavior as running it locally.
+#
+# PYTHONUNBUFFERED: stdout is block-buffered (not line-buffered) whenever
+# it isn't a real terminal — true for journald's captured stream — so
+# ConsoleReporter's prints would sit in an internal buffer indefinitely
+# instead of showing up in `journalctl -f` in real time. stderr is never
+# buffered, which is why only the "Vigilando cada Ns..." line ever appeared
+# without this.
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/pokemon-tracker/.venv/bin/tracker --interval 20 --telegram
 Restart=on-failure
 RestartSec=10
