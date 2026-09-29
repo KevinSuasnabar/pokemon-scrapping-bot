@@ -1,0 +1,20 @@
+[Unit]
+Description=Pokemon TCG 30th Anniversary Offer Tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tracker
+Group=tracker
+WorkingDirectory=/opt/pokemon-tracker
+# `.env` is loaded by the app itself (python-dotenv, cwd-relative) — no
+# EnvironmentFile= needed here, same behavior as running it locally.
+ExecStart=/opt/pokemon-tracker/.venv/bin/tracker --interval 20 --telegram
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
