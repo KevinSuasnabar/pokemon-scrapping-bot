@@ -218,6 +218,58 @@ class HttpxTransport:
         )
 
 
+class PlaywrightTransport:
+    """Browser-backed `Transport` — the seam the module docstring's Task 0
+    spike anticipated but didn't need at the time (every probe returned 200
+    with no bot-challenge markers). That changed: confirmed live 2026-09-29,
+    Ripley now answers every page (not just search) with Cloudflare's
+    `cf-mitigated: challenge` JS challenge, which `HttpxTransport` cannot
+    pass — no plain HTTP client can execute JavaScript. A real (even
+    headless) browser can.
+
+    A fresh Playwright/browser instance is started and closed within each
+    `fetch_html()` call, not reused across calls: Playwright's sync API is
+    not thread-safe, and `TrackOffersUseCase` runs each store's fetch in its
+    own worker thread — a shared instance built once in the main thread
+    would violate that. The ~1-2s browser-launch cost per request is an
+    acceptable tradeoff here, given the jittered ~20-30s interval this
+    already runs under.
+
+    Honesty note: this could not be verified end-to-end against the live
+    Cloudflare challenge in this session's environment (missing OS-level
+    Chromium libraries, no passwordless sudo available to install them) —
+    verify it actually gets past the challenge on the real deployment target
+    before relying on it."""
+
+    def fetch_html(self, url: str) -> RawPayload:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                try:
+                    page = browser.new_page()
+                    page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    # Cloudflare's challenge runs its own JS and reloads the
+                    # page on success — give it a few seconds before reading
+                    # the DOM back out.
+                    page.wait_for_timeout(5000)
+                    body = page.content()
+                finally:
+                    browser.close()
+        except PlaywrightError as exc:
+            raise StoreFetchError(f"ripley: playwright request to {url} failed: {exc}") from exc
+
+        return RawPayload(
+            store=STORE_SLUG,
+            source_url=url,
+            content_type="text/html",
+            body=body,
+            fetched_at=datetime.now(UTC),
+        )
+
+
 class RipleyAdapter:
     store_slug = STORE_SLUG
 
