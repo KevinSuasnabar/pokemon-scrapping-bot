@@ -308,6 +308,78 @@ def test_run_within_interval_sends_no_overrun_alert(monkeypatch, db_path: str, c
     assert "Aviso" not in capsys.readouterr().err
 
 
+def test_healthcheck_sends_test_message_and_exits(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+
+    sent_texts: list[str] = []
+
+    class _FakeTelegramReporter:
+        def __init__(self, client, bot_token, chat_id) -> None:
+            assert bot_token == "fake-token"
+            assert chat_id == "fake-chat-id"
+
+        def send_text(self, text: str) -> None:
+            sent_texts.append(text)
+
+    monkeypatch.setattr(cli_main, "TelegramReporter", _FakeTelegramReporter)
+
+    exit_code = cli_main.main(["--healthcheck"])
+
+    assert exit_code == 0
+    assert len(sent_texts) == 1
+    assert "Telegram" in sent_texts[0]
+    assert "enviado" in capsys.readouterr().out.lower()
+
+
+def test_healthcheck_requires_env_vars(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    # Isolate from any real .env this developer's own project root may have
+    # (load_dotenv() would otherwise silently repopulate the vars just
+    # deleted above, from a .env in a parent directory of the real cwd).
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli_main.main(["--healthcheck"])
+    assert exit_code == 2
+    assert "TELEGRAM_BOT_TOKEN" in capsys.readouterr().err
+
+
+def test_healthcheck_cannot_combine_with_list(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+    exit_code = cli_main.main(["--healthcheck", "--list"])
+    assert exit_code == 2
+    assert "--healthcheck" in capsys.readouterr().err
+
+
+def test_healthcheck_cannot_combine_with_interval(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+    exit_code = cli_main.main(["--healthcheck", "--interval", "20"])
+    assert exit_code == 2
+    assert "--healthcheck" in capsys.readouterr().err
+
+
+def test_healthcheck_does_not_touch_the_database(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+
+    class _FakeTelegramReporter:
+        def __init__(self, client, bot_token, chat_id) -> None:
+            pass
+
+        def send_text(self, text: str) -> None:
+            pass
+
+    monkeypatch.setattr(cli_main, "TelegramReporter", _FakeTelegramReporter)
+
+    db_path = tmp_path / "should_not_be_created.db"
+    exit_code = cli_main.main(["--healthcheck", "--db", str(db_path)])
+
+    assert exit_code == 0
+    assert not db_path.exists()
+
+
 def test_dotenv_file_is_loaded_for_telegram_credentials(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:

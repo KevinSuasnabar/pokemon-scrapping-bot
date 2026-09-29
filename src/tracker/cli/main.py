@@ -145,6 +145,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "events — safe to combine with --interval for a long-running watch."
         ),
     )
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help=(
+            "Send a one-time test message to Telegram and exit immediately "
+            f"(requires {TELEGRAM_BOT_TOKEN_ENV} and {TELEGRAM_CHAT_ID_ENV}). "
+            "Runs no store queries and touches no database — use it to "
+            "confirm the bot/chat credentials and connectivity work on demand, "
+            "independent of whether anything is currently in stock."
+        ),
+    )
     return parser
 
 
@@ -337,6 +348,35 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+
+    if args.healthcheck:
+        if args.list_current:
+            print("--healthcheck no se puede combinar con --list", file=sys.stderr)
+            return 2
+        if args.interval is not None:
+            print("--healthcheck no se puede combinar con --interval", file=sys.stderr)
+            return 2
+        credentials = _telegram_credentials_from_env()
+        if credentials is None:
+            print(
+                f"--healthcheck requiere que las variables de entorno {TELEGRAM_BOT_TOKEN_ENV} "
+                f"y {TELEGRAM_CHAT_ID_ENV} estén configuradas",
+                file=sys.stderr,
+            )
+            return 2
+        bot_token, chat_id = credentials
+        # Deliberately skips connect()/apply_schema()/seed_stores() below —
+        # a connectivity check has no business touching the tracking database.
+        client = build_http_client()
+        try:
+            TelegramReporter(client, bot_token, chat_id).send_text(
+                "✅ Healthcheck del tracker — si ves este mensaje, la conexión "
+                "a Telegram funciona correctamente."
+            )
+        finally:
+            client.close()
+        print("Mensaje de prueba enviado a Telegram.")
+        return 0
 
     conn = connect(args.db)
     apply_schema(conn)
