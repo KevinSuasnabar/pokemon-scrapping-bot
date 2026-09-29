@@ -259,7 +259,21 @@ class PlaywrightTransport:
                     # "visible" would time out unconditionally regardless of
                     # whether the challenge actually resolved — confirmed
                     # live 2026-09-29, this exact bug.
-                    page.wait_for_selector("script#__NEXT_DATA__", timeout=30000, state="attached")
+                    try:
+                        page.wait_for_selector("script#__NEXT_DATA__", timeout=30000, state="attached")
+                    except PlaywrightError:
+                        # Diagnostic aid: a bare timeout doesn't say WHAT the
+                        # browser got stuck on — log the title and a content
+                        # snippet so "still on the Cloudflare challenge" is
+                        # distinguishable from some other failure mode,
+                        # without needing to pull a screenshot off the server.
+                        print(
+                            f"ripley: playwright timed out on {url} — "
+                            f"page title: {page.title()!r}, "
+                            f"content snippet: {page.content()[:500]!r}",
+                            file=sys.stderr,
+                        )
+                        raise
                     body = page.content()
                 finally:
                     browser.close()
