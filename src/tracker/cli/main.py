@@ -29,7 +29,7 @@ from tracker.adapters.stores.metro import MetroAdapter
 from tracker.adapters.stores.oechsle import OechsleAdapter
 from tracker.adapters.stores.pharmax import PharmaxAdapter
 from tracker.adapters.stores.plaza_vea import PlazaVeaAdapter
-from tracker.adapters.stores.ripley import PlaywrightTransport, RipleyAdapter
+from tracker.adapters.stores.ripley import HttpxTransport, RipleyAdapter
 from tracker.adapters.stores.tailoy import TaiLoyAdapter
 from tracker.adapters.stores.wong import WongAdapter
 from tracker.application.dto import CurrentListingEntry, RunOutcome
@@ -94,7 +94,7 @@ def _build_adapters(client: httpx.Client, store_filter: Sequence[str] | None) ->
         "plaza_vea": lambda: PlazaVeaAdapter(client),
         "oechsle": lambda: OechsleAdapter(client),
         "ilahui": lambda: IlahuiAdapter(client),
-        "ripley": lambda: RipleyAdapter(transport=PlaywrightTransport()),
+        "ripley": lambda: RipleyAdapter(transport=HttpxTransport(client)),
         "pharmax": lambda: PharmaxAdapter(client),
         "tailoy": lambda: TaiLoyAdapter(client),
         "falabella": lambda: FalabellaAdapter(client),

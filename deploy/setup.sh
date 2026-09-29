@@ -32,15 +32,7 @@ fi
 
 sudo -u tracker python3 -m venv "$APP_DIR/.venv"
 sudo -u tracker "$APP_DIR/.venv/bin/pip" install --upgrade pip
-sudo -u tracker "$APP_DIR/.venv/bin/pip" install -e "$APP_DIR[ripley]"
-
-# Ripley now requires a real browser (Cloudflare JS challenge, confirmed
-# live 2026-09-29 — see ripley.py's PlaywrightTransport). Chromium's OS-level
-# shared libraries need root; the browser binary itself installs separately,
-# into the `tracker` user's own cache dir, so the systemd service (which
-# runs as `tracker`) can find it at runtime.
-sudo "$APP_DIR/.venv/bin/playwright" install-deps chromium
-sudo -u tracker "$APP_DIR/.venv/bin/playwright" install chromium
+sudo -u tracker "$APP_DIR/.venv/bin/pip" install -e "$APP_DIR"
 
 sudo cp "$APP_DIR/deploy/tracker.service" /etc/systemd/system/tracker.service
 sudo systemctl daemon-reload

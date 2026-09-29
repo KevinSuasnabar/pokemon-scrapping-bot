@@ -13,7 +13,6 @@ dependencies = [
 [project.optional-dependencies]
 ripley = [
     "playwright>=1.42",
-    "playwright-stealth>=2.0",
     "pytest-playwright>=0.5",
 ]
 dev = [
