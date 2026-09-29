@@ -239,3 +239,24 @@ class VtexStoreAdapter:
 
     def search(self, query: str, observed_at: datetime) -> list[Offer]:
         return self.parse(self.fetch(query), observed_at)
+
+    def fetch_known(self, identifiers: Sequence[str], observed_at: datetime) -> list[Offer]:
+        """`SupportsKnownProducts`: `fq=productId:<id>` is the same catalog
+        search API `fetch()` uses, just filtered to one exact product —
+        confirmed live 2026-09-29 against a real Plaza Vea product ID.
+        Reuses `parse_products` unchanged; a product this store simply
+        doesn't carry (bad/stale id) returns an empty array, not an error.
+        A network failure on one identifier is skipped, not fatal to the
+        rest — same "one bad known-SKU shouldn't kill the others" philosophy
+        as Ripley's/Tai Loy's `fetch_known`, deliberately not propagated
+        like `fetch()`'s own (search) failures are."""
+        offers: list[Offer] = []
+        for product_id in identifiers:
+            url = f"{self._base_url}/api/catalog_system/pub/products/search?fq=productId:{quote(product_id)}"
+            try:
+                response = get_with_retry(self._client, url)
+            except httpx.HTTPError as exc:
+                print(f"{self.store_slug}: skipping known product {product_id}: {exc}", file=sys.stderr)
+                continue
+            offers.extend(parse_products(self.store_slug, response.text, observed_at, self._base_url))
+        return offers

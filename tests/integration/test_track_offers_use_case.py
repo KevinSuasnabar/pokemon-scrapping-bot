@@ -80,6 +80,34 @@ class _FakeAdapter:
         return self.parse(self.fetch(query), observed_at)
 
 
+class _FakeAdapterWithKnownProducts(_FakeAdapter):
+    """Adds `fetch_known` (`SupportsKnownProducts`) on top of `_FakeAdapter`
+    — a plain `isinstance` check against the structural, `@runtime_checkable`
+    protocol is enough for `TrackOffersUseCase` to pick it up, no formal
+    subclassing needed in production code, but the fake needs the method to
+    exist for the test to exercise the real branch."""
+
+    def __init__(self, store_slug: str, offers: list[Offer], known_offers: list[Offer]) -> None:
+        super().__init__(store_slug, offers)
+        self._known_offers = known_offers
+
+    def fetch_known(self, identifiers: Sequence[str], observed_at: datetime) -> list[Offer]:
+        return [
+            Offer(
+                store=o.store,
+                external_id=o.external_id,
+                title=o.title,
+                url=o.url,
+                price=o.price,
+                availability=o.availability,
+                language=o.language,
+                product_type=o.product_type,
+                observed_at=observed_at,
+            )
+            for o in self._known_offers
+        ]
+
+
 def _target_offer(
     store: str, external_id: str, *, price: str = "99.90", availability: Availability = Availability.IN_STOCK
 ) -> Offer:
@@ -340,3 +368,80 @@ def test_execute_results_preserve_adapter_order_regardless_of_fetch_completion_o
     outcome = use_case.execute(["pokemon 30 aniversario"])
 
     assert [r.store for r in outcome.results] == ["plaza_vea", "oechsle", "ripley"]
+
+
+def test_known_products_bypass_the_text_matching_filter(tmp_db: sqlite3.Connection) -> None:
+    """The exact real-world case this exists for (Tai Loy's Sylveon box,
+    confirmed live 2026-09-29): a title that would fail `is_target_offer()`
+    (no "aniversario"/"anniversary"/"celebration" marker) must still be
+    reported when it comes from `fetch_known` — a manually-curated
+    identifier is already confirmed correct, re-running the filter that
+    already missed it once would just miss it again."""
+    repo = SqliteOfferRepository(tmp_db)
+    ghost_product = Offer(
+        store="tailoy",
+        external_id="55969003",
+        title="Caja Pokémon Tcg 30Th Sylveon Inglés",  # no anniversary marker
+        url="https://www.tailoy.com.pe/x-55969003.html",
+        price=Money(amount=Decimal("129.90")),
+        availability=Availability.IN_STOCK,
+        language=Language.ENGLISH,
+        product_type=ProductType.COLLECTION_BOX,
+        observed_at=RUN1,
+    )
+    adapter = _FakeAdapterWithKnownProducts("tailoy", offers=[], known_offers=[ghost_product])
+    use_case = TrackOffersUseCase(
+        [adapter], repo, _NullReporter(), _StepClock([RUN1]), known_products={"tailoy": ["some-url"]}
+    )
+
+    outcome = use_case.execute(["pokemon 30 aniversario"])
+
+    assert outcome.results[0].offer_count == 1
+    assert outcome.results[0].events[0].external_id == "55969003"
+    assert repo.last_known("tailoy") != {}
+
+
+def test_known_products_not_fetched_when_no_identifiers_configured(tmp_db: sqlite3.Connection) -> None:
+    repo = SqliteOfferRepository(tmp_db)
+    ghost_product = _target_offer("tailoy", "ghost")
+    adapter = _FakeAdapterWithKnownProducts("tailoy", offers=[], known_offers=[ghost_product])
+    # No `known_products` entry for "tailoy" at all — fetch_known must not run.
+    use_case = TrackOffersUseCase([adapter], repo, _NullReporter(), _StepClock([RUN1]))
+
+    outcome = use_case.execute(["pokemon 30 aniversario"])
+
+    assert outcome.results[0].offer_count == 0
+
+
+def test_known_products_ignored_for_adapters_that_do_not_support_them(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    """A plain `_FakeAdapter` (no `fetch_known`) must not error out even if
+    `known_products` has an entry for its slug — `isinstance` against the
+    optional protocol just skips it."""
+    repo = SqliteOfferRepository(tmp_db)
+    adapter = _FakeAdapter("plaza_vea", [_target_offer("plaza_vea", "p1")])
+    use_case = TrackOffersUseCase(
+        [adapter], repo, _NullReporter(), _StepClock([RUN1]), known_products={"plaza_vea": ["999"]}
+    )
+
+    outcome = use_case.execute(["pokemon 30 aniversario"])  # must not raise
+
+    assert outcome.results[0].status == "ok"
+    assert outcome.results[0].offer_count == 1
+
+
+def test_known_products_dedupe_against_a_search_result_for_the_same_product(
+    tmp_db: sqlite3.Connection,
+) -> None:
+    repo = SqliteOfferRepository(tmp_db)
+    searched = _target_offer("ripley", "shared-id", price="100.00")
+    known = _target_offer("ripley", "shared-id", price="90.00")
+    adapter = _FakeAdapterWithKnownProducts("ripley", offers=[searched], known_offers=[known])
+    use_case = TrackOffersUseCase(
+        [adapter], repo, _NullReporter(), _StepClock([RUN1]), known_products={"ripley": ["shared-id"]}
+    )
+
+    outcome = use_case.execute(["pokemon 30 aniversario"])
+
+    assert outcome.results[0].offer_count == 1  # not counted twice

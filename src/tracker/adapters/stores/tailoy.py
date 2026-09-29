@@ -24,6 +24,7 @@ either alone, per explicit user request.
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -114,6 +115,56 @@ def parse_search_html(body: str, observed_at: datetime, base_url: str = BASE_URL
     return offers
 
 
+def _parse_known_product_detail(body: str, url: str, observed_at: datetime) -> Offer:
+    """Pure: a product detail page -> one `Offer`, for
+    `SupportsKnownProducts.fetch_known`. Confirmed live 2026-09-29 against a
+    real "ghost product" (in stock, purchasable, absent from every search
+    query tried): `<h1>` for the title, `.price` for price (a single,
+    unambiguous match on a detail page — unlike a search-result card, which
+    can have more than one `.price` node nearby).
+
+    Availability uses the add-to-cart button's specific
+    `#product-addtocart-button` id rather than `_is_really_available`'s
+    generic `button[type="submit"]` lookup — a detail page also has a search
+    box and a newsletter form, each with their own `type="submit"` button,
+    which would otherwise match first in document order instead of the real
+    add-to-cart button."""
+    tree = HTMLParser(body)
+    title_node = tree.css_first("h1")
+    if title_node is None:
+        raise StoreParseError(f"{STORE_SLUG}: no <h1> found for known product page {url}")
+    title = title_node.text(strip=True)
+
+    external_id = _external_id_from_url(url)
+    if external_id is None:
+        raise StoreParseError(f"{STORE_SLUG}: could not extract product id from known URL {url}")
+
+    price_node = tree.css_first(".price")
+    price = _parse_price(price_node.text(strip=True)) if price_node is not None else None
+
+    button = tree.css_first("button#product-addtocart-button")
+    available = (
+        button is not None
+        and button.attributes.get("type") == "submit"
+        and not any(
+            marker in (button.attributes.get("title") or "").lower()
+            for marker in _NOT_REALLY_AVAILABLE_MARKERS
+        )
+    )
+
+    return Offer(
+        store=STORE_SLUG,
+        external_id=external_id,
+        title=title,
+        url=url,
+        price=price,
+        availability=Availability.IN_STOCK if available else Availability.OUT_OF_STOCK,
+        language=detect_language(title),
+        product_type=detect_product_type(title),
+        observed_at=observed_at,
+    )
+
+
 class TaiLoyAdapter:
     store_slug = STORE_SLUG
 
@@ -148,3 +199,21 @@ class TaiLoyAdapter:
 
     def search(self, query: str, observed_at: datetime) -> list[Offer]:
         return self.parse(self.fetch(query), observed_at)
+
+    def fetch_known(self, identifiers: Sequence[str], observed_at: datetime) -> list[Offer]:
+        """`SupportsKnownProducts`. `identifiers` are full product URLs, not
+        bare SKUs — confirmed live 2026-09-29, Tai Loy has no working
+        numeric-id URL fallback (`/catalog/product/view/id/<id>/` 404s),
+        unlike VTEX/Ripley."""
+        offers: list[Offer] = []
+        for url in identifiers:
+            try:
+                response = get_with_retry(self._client, url)
+            except httpx.HTTPError as exc:
+                print(f"{self.store_slug}: skipping known product {url}: {exc}", file=sys.stderr)
+                continue
+            try:
+                offers.append(_parse_known_product_detail(response.text, url, observed_at))
+            except StoreParseError as exc:
+                print(f"{self.store_slug}: skipping known product {url}: {exc}", file=sys.stderr)
+        return offers

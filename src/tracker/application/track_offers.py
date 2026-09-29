@@ -19,12 +19,12 @@ without changing behavior, only how long it takes to get there.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from tracker.application.dto import RunOutcome, StoreResult
-from tracker.application.ports import Clock, OfferRepository, Reporter, StoreAdapter
+from tracker.application.ports import Clock, OfferRepository, Reporter, StoreAdapter, SupportsKnownProducts
 from tracker.domain.change_detection import ChangeDetector
 from tracker.domain.matching import is_target_offer
 from tracker.domain.model import Offer, OfferKey
@@ -39,7 +39,9 @@ def _dedupe_by_key(offers: list[Offer]) -> list[Offer]:
     return list(deduped.values())
 
 
-def _fetch_offers(adapter: StoreAdapter, queries: Sequence[str], now: datetime) -> list[Offer]:
+def _fetch_offers(
+    adapter: StoreAdapter, queries: Sequence[str], known_identifiers: Sequence[str], now: datetime
+) -> tuple[list[Offer], list[Offer]]:
     """Runs in a worker thread. `adapter.search()` is each adapter's own
     `fetch()`+`parse()` composition (StoreAdapter port:
     `search = parse(fetch(...))`) — calling it here rather than fetch+parse
@@ -47,11 +49,20 @@ def _fetch_offers(adapter: StoreAdapter, queries: Sequence[str], now: datetime) 
     confirmation step after parsing; manually recomposing fetch+parse in the
     use case would silently skip that step. Any exception propagates to the
     caller via the `Future` — the thread pool doesn't swallow it, the main
-    thread's per-store try/except (in `execute()`) still does."""
-    fetched: list[Offer] = []
+    thread's per-store try/except (in `execute()`) still does.
+
+    Returns `(searched, known)` — kept separate because `execute()` applies
+    `is_target_offer()`'s text filter only to `searched`; `known` (see
+    `SupportsKnownProducts`) bypasses it entirely, 2026-09-29 design decision."""
+    searched: list[Offer] = []
     for query in queries:
-        fetched.extend(adapter.search(query, now))
-    return fetched
+        searched.extend(adapter.search(query, now))
+
+    known: list[Offer] = []
+    if known_identifiers and isinstance(adapter, SupportsKnownProducts):
+        known = adapter.fetch_known(known_identifiers, now)
+
+    return searched, known
 
 
 class TrackOffersUseCase:
@@ -61,11 +72,13 @@ class TrackOffersUseCase:
         repository: OfferRepository,
         reporter: Reporter,
         clock: Clock,
+        known_products: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
         self._adapters = adapters
         self._repository = repository
         self._reporter = reporter
         self._clock = clock
+        self._known_products = known_products or {}
 
     def execute(self, queries: Sequence[str]) -> RunOutcome:
         now = self._clock.now()
@@ -73,11 +86,17 @@ class TrackOffersUseCase:
         results: list[StoreResult] = []
 
         # --- Concurrent phase: network-bound fetching only, no persistence. ---
-        fetch_results: dict[str, list[Offer] | Exception] = {}
+        fetch_results: dict[str, tuple[list[Offer], list[Offer]] | Exception] = {}
         if self._adapters:
             with ThreadPoolExecutor(max_workers=len(self._adapters)) as executor:
                 future_to_slug = {
-                    executor.submit(_fetch_offers, adapter, queries, now): adapter.store_slug
+                    executor.submit(
+                        _fetch_offers,
+                        adapter,
+                        queries,
+                        self._known_products.get(adapter.store_slug, []),
+                        now,
+                    ): adapter.store_slug
                     for adapter in self._adapters
                 }
                 for future in as_completed(future_to_slug):
@@ -94,7 +113,10 @@ class TrackOffersUseCase:
                 if isinstance(fetch_result, Exception):
                     raise fetch_result
 
-                matched = _dedupe_by_key([offer for offer in fetch_result if is_target_offer(offer)])
+                searched, known = fetch_result
+                matched = _dedupe_by_key(
+                    [offer for offer in searched if is_target_offer(offer)] + known
+                )
 
                 # Ordering invariant (design.md "Data Flow"): last_known/has_history
                 # MUST be read before this run's observations are written for this

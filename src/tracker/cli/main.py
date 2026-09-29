@@ -35,6 +35,7 @@ from tracker.adapters.stores.wong import WongAdapter
 from tracker.application.dto import CurrentListingEntry, RunOutcome
 from tracker.application.ports import Reporter, StoreAdapter
 from tracker.application.track_offers import TrackOffersUseCase
+from tracker.infrastructure.config.known_products import load_known_products
 from tracker.infrastructure.http.client import build_http_client
 from tracker.infrastructure.persistence.connection import apply_schema, connect, seed_stores
 from tracker.infrastructure.persistence.sqlite_offer_repository import SqliteOfferRepository
@@ -46,6 +47,7 @@ TELEGRAM_CHAT_ID_ENV = "TELEGRAM_CHAT_ID"
 
 DEFAULT_QUERIES: tuple[str, ...] = ("pokemon 30 aniversario", "pokemon 30th anniversary")
 DEFAULT_DB_PATH = "./tracker.db"
+DEFAULT_KNOWN_PRODUCTS_PATH = "./known_products.json"
 ALL_STORE_SLUGS: tuple[str, ...] = (
     "plaza_vea",
     "oechsle",
@@ -246,8 +248,15 @@ def _run_once(
     adapters = _build_adapters(client, args.stores)
     queries = args.queries or list(DEFAULT_QUERIES)
     reporter = _build_reporter(args, client)
+    # Re-read every run (not cached at startup): editing known_products.json
+    # by hand should take effect on the next cycle, not require a restart.
+    known_products = load_known_products(DEFAULT_KNOWN_PRODUCTS_PATH)
     use_case = TrackOffersUseCase(
-        adapters=adapters, repository=repository, reporter=reporter, clock=SystemClock()
+        adapters=adapters,
+        repository=repository,
+        reporter=reporter,
+        clock=SystemClock(),
+        known_products=known_products,
     )
     outcome = use_case.execute(queries)
 

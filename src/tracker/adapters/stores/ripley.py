@@ -151,6 +151,46 @@ def parse_product_detail_stock(body: str) -> int | None:
     return int(quantity) if isinstance(quantity, int | float) else None
 
 
+def _parse_known_product_detail(body: str, sku: str, url: str, observed_at: datetime) -> Offer:
+    """Pure: a product detail page's `__NEXT_DATA__` -> one `Offer`, for
+    `SupportsKnownProducts.fetch_known`.
+
+    Honesty note (2026-09-29): `name`/`price` are read from the same
+    `detailProps.data.product` object `parse_product_detail_stock` already
+    reads `xcatentryQuantity` from — inferred by the same field-naming
+    convention confirmed on the search page's product objects, but NOT
+    independently confirmed live on the detail page itself: Ripley's
+    Cloudflare was blocking this session's own IP for the entire time this
+    was written. Raises `StoreParseError` on any unexpected shape rather
+    than silently guessing wrong data into an offer — verify this against a
+    real response once unblocked."""
+    tree = HTMLParser(body)
+    script_node = tree.css_first("script#__NEXT_DATA__")
+    if script_node is None:
+        raise StoreParseError(f"ripley: __NEXT_DATA__ script not found for known product {sku}")
+    try:
+        data = json.loads(script_node.text())
+        product = data["props"]["pageProps"]["detailProps"]["data"]["product"]
+        name = str(product["name"])
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise StoreParseError(f"ripley: unexpected detail-page shape for known product {sku}: {exc}") from exc
+
+    quantity = product.get("xcatentryQuantity")
+    in_stock = isinstance(quantity, int | float) and quantity > 0
+
+    return Offer(
+        store=STORE_SLUG,
+        external_id=sku,
+        title=name,
+        url=url,
+        price=_clean_price(product.get("price")),
+        availability=Availability.IN_STOCK if in_stock else Availability.OUT_OF_STOCK,
+        language=detect_language(name),
+        product_type=detect_product_type(name),
+        observed_at=observed_at,
+    )
+
+
 class Transport(Protocol):
     """The seam design decision #5 describes: swapping transport never
     changes `RipleyAdapter`'s constructor shape or the `StoreAdapter` port."""
@@ -223,3 +263,37 @@ class RipleyAdapter:
             self._confirm_real_stock(offer) if offer.availability is Availability.IN_STOCK else offer
             for offer in offers
         ]
+
+    def fetch_known(self, identifiers: Sequence[str], observed_at: datetime) -> list[Offer]:
+        """`SupportsKnownProducts`. Ripley uses TWO different URL shapes
+        depending on whether the product has color/size variants — both
+        confirmed live 2026-09-29:
+          - a plain (no-variant) product resolves at `{slug}-{sku}p`
+            (trailing "p"); this is the shape `_product_url` already builds
+            for search-derived offers, and the descriptive slug is cosmetic
+            (an arbitrary placeholder still resolves).
+          - a product WITH color/size variants 404s on that "p" form and
+            instead resolves at `{slug}-{sku}` (no "p") — the slug and any
+            `?color_XX=...` query string are both optional there too.
+        There's no way to tell which shape a given SKU needs without trying,
+        so this attempts the "p" form first and falls back to the no-"p"
+        form on failure. Fetches the detail page directly, which already
+        carries the real stock quantity (`xcatentryQuantity`) — no separate
+        confirmation round-trip needed, unlike `search()`."""
+        offers: list[Offer] = []
+        for sku in identifiers:
+            url = f"{self._base_url}/producto-{sku}p"
+            try:
+                payload = self._transport.fetch_html(url)
+            except StoreFetchError:
+                url = f"{self._base_url}/producto-{sku}"
+                try:
+                    payload = self._transport.fetch_html(url)
+                except StoreFetchError as exc:
+                    print(f"ripley: skipping known product {sku}: {exc}", file=sys.stderr)
+                    continue
+            try:
+                offers.append(_parse_known_product_detail(payload.body, sku, url, observed_at))
+            except StoreParseError as exc:
+                print(f"ripley: skipping known product {sku}: {exc}", file=sys.stderr)
+        return offers

@@ -3,6 +3,8 @@ pagination loop over the total-count header, and error mapping."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
@@ -129,3 +131,59 @@ def test_fetch_timeout_raises_store_fetch_error() -> None:
     adapter = VtexStoreAdapter("plaza_vea", BASE_URL, _client_with_handler(handler))
     with pytest.raises(StoreFetchError):
         adapter.fetch("pokemon")
+
+
+def test_fetch_known_queries_by_product_id() -> None:
+    """`SupportsKnownProducts.fetch_known` — confirmed live 2026-09-29 that
+    `fq=productId:<id>` on the same catalog search API returns one exact
+    product, no full-text search involved."""
+    seen_urls: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(request.url)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "productId": "102340715",
+                    "productName": "Caja EX POKÉMON TCG 30.º Aniversario en Inglés",
+                    "linkText": "caja-ex-tcg-pokemon-30-aniversario-ingles",
+                    "items": [
+                        {
+                            "sellers": [
+                                {
+                                    "sellerId": "1",
+                                    "commertialOffer": {
+                                        "Price": 129.9,
+                                        "AvailableQuantity": 3,
+                                        "IsAvailable": True,
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ],
+        )
+
+    adapter = VtexStoreAdapter("plaza_vea", BASE_URL, _client_with_handler(handler))
+    offers = adapter.fetch_known(["102340715"], datetime(2026, 1, 15, tzinfo=UTC))
+
+    assert len(offers) == 1
+    assert offers[0].external_id == "102340715"
+    assert seen_urls[0].params["fq"] == "productId:102340715"
+
+
+def test_fetch_known_skips_identifiers_that_fail_without_raising() -> None:
+    """One network failure on a known-product lookup must not stop the rest
+    from being fetched — same philosophy as Ripley's/Tai Loy's `fetch_known`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["fq"] == "productId:bad-id":
+            return httpx.Response(500, text="boom")
+        return httpx.Response(200, json=[])
+
+    adapter = VtexStoreAdapter("plaza_vea", BASE_URL, _client_with_handler(handler))
+    offers = adapter.fetch_known(["bad-id", "102340715"], datetime(2026, 1, 15, tzinfo=UTC))
+
+    assert offers == []  # both requests succeeded at the transport level (no exception raised)

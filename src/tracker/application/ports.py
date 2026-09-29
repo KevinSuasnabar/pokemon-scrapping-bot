@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from tracker.application.dto import (
     CurrentListingEntry,
@@ -30,6 +30,30 @@ class StoreAdapter(Protocol):
 
     def search(self, query: str, observed_at: datetime) -> list[Offer]:
         """`= parse(fetch(query), observed_at)`."""
+        ...
+
+
+@runtime_checkable
+class SupportsKnownProducts(Protocol):
+    """Optional capability, not part of `StoreAdapter` itself (design
+    decision, 2026-09-29): only VTEX-backed stores, Ripley, and Tai Loy
+    implement it so far — adding it to `StoreAdapter` would force every
+    other adapter (Ilahui, Pharmax, Falabella) to grow a method it doesn't
+    need. Callers check `isinstance(adapter, SupportsKnownProducts)`.
+
+    Covers "ghost products": a product that is real, live, and purchasable
+    by direct URL/SKU but isn't surfaced by the store's own search — confirmed
+    live 2026-09-29 on Tai Loy (Magento search-index lag) and Ripley (a
+    product absent from every tried search query). `fetch_known` results
+    bypass `is_target_offer()`'s text heuristics entirely: a manually-curated
+    identifier is already confirmed correct by the person who added it, so
+    re-running the same word-matching that already missed it once is
+    redundant at best.
+    """
+
+    def fetch_known(self, identifiers: Sequence[str], observed_at: datetime) -> list[Offer]:
+        """One `Offer` per identifier that could be fetched and parsed; a
+        single bad identifier is skipped, not fatal to the others."""
         ...
 
 
