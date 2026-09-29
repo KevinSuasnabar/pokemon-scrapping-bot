@@ -235,11 +235,14 @@ class PlaywrightTransport:
     acceptable tradeoff here, given the jittered ~20-30s interval this
     already runs under.
 
-    Honesty note: this could not be verified end-to-end against the live
-    Cloudflare challenge in this session's environment (missing OS-level
-    Chromium libraries, no passwordless sudo available to install them) —
-    verify it actually gets past the challenge on the real deployment target
-    before relying on it."""
+    Honesty note: confirmed live 2026-09-29 that this gets Playwright itself
+    running end-to-end against the real Cloudflare challenge — but a fixed
+    5s wait after navigation sometimes captured the challenge's "Just a
+    moment..." interstitial instead of the real page (the challenge's own
+    JS runs, sets a cookie, then reloads — how long that takes varies).
+    Fixed by waiting for the specific element every page this adapter
+    actually parses depends on, `script#__NEXT_DATA__`, instead of a blind
+    sleep."""
 
     def fetch_html(self, url: str) -> RawPayload:
         from playwright.sync_api import Error as PlaywrightError
@@ -251,10 +254,7 @@ class PlaywrightTransport:
                 try:
                     page = browser.new_page()
                     page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                    # Cloudflare's challenge runs its own JS and reloads the
-                    # page on success — give it a few seconds before reading
-                    # the DOM back out.
-                    page.wait_for_timeout(5000)
+                    page.wait_for_selector("script#__NEXT_DATA__", timeout=30000)
                     body = page.content()
                 finally:
                     browser.close()
