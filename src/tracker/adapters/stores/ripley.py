@@ -254,7 +254,12 @@ class PlaywrightTransport:
                 try:
                     page = browser.new_page()
                     page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                    page.wait_for_selector("script#__NEXT_DATA__", timeout=30000)
+                    # state="attached" (not the default "visible"): a
+                    # <script> tag has no visual box, so waiting for
+                    # "visible" would time out unconditionally regardless of
+                    # whether the challenge actually resolved — confirmed
+                    # live 2026-09-29, this exact bug.
+                    page.wait_for_selector("script#__NEXT_DATA__", timeout=30000, state="attached")
                     body = page.content()
                 finally:
                     browser.close()
