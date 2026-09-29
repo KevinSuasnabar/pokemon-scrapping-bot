@@ -86,7 +86,10 @@ class TelegramReporter:
         self._bot_token = bot_token
         self._chat_id = chat_id
 
-    def _send(self, text: str) -> None:
+    def send_text(self, text: str) -> None:
+        """Sends an arbitrary HTML-formatted message — the primitive `report()`
+        is built on, also used directly for operational alerts (e.g. the
+        `--interval` loop's own overrun notice) that aren't a `RunOutcome`."""
         url = f"{_API_BASE}/bot{self._bot_token}/sendMessage"
         try:
             response = self._client.post(
@@ -108,7 +111,7 @@ class TelegramReporter:
     def report(self, outcome: RunOutcome) -> None:
         message = _build_message(outcome)
         if message is not None:
-            self._send(message)
+            self.send_text(message)
 
     def report_listing(self, entries: list[CurrentListingEntry]) -> None:
         pass

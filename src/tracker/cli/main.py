@@ -249,12 +249,40 @@ def _run_loop(
         f"Vigilando cada {args.interval}s — presioná Ctrl+C para detener.",
         file=sys.stderr,
     )
+
+    # Built once, reused for every overrun notice below — independent of the
+    # per-run reporter `_run_once` builds internally, since this alert isn't
+    # a `RunOutcome`. Credentials were already validated in `main()`.
+    telegram: TelegramReporter | None = None
+    if args.telegram:
+        credentials = _telegram_credentials_from_env()
+        assert credentials is not None
+        bot_token, chat_id = credentials
+        telegram = TelegramReporter(client, bot_token, chat_id)
+
     try:
         while True:
+            cycle_start = time.monotonic()
             try:
                 _run_once(repository, client, args)
             except Exception as exc:  # noqa: BLE001 — keep an unattended watch alive
                 print(f"Error inesperado en esta corrida (continuando): {exc}", file=sys.stderr)
+            elapsed = time.monotonic() - cycle_start
+
+            # Deliberately NOT shortening the sleep below by `elapsed` (that
+            # would be fixed-rate scheduling, a separate change) — this only
+            # detects and reports the overrun, it doesn't correct for it.
+            if elapsed > args.interval:
+                notice = (
+                    f"⏱️ La corrida tardó {elapsed:.1f}s, más que el intervalo configurado "
+                    f"de {args.interval}s. El chequeo real está siendo más lento que lo "
+                    "pedido — puede deberse a timeouts o reintentos en alguna tienda. El "
+                    "tracker sigue corriendo."
+                )
+                print(f"Aviso: {notice}", file=sys.stderr)
+                if telegram is not None:
+                    telegram.send_text(notice)
+
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print("\nDetenido por el usuario.", file=sys.stderr)

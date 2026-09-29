@@ -215,6 +215,88 @@ def test_interval_loop_survives_an_unexpected_exception_mid_run(
     assert "Detenido por el usuario" in err
 
 
+def test_run_that_exceeds_interval_sends_a_telegram_alert(monkeypatch, db_path: str, capsys) -> None:
+    """Regression: if a run takes longer than `--interval`, the loop must
+    surface that (stderr + Telegram if configured) rather than silently
+    running behind schedule forever. Deliberately does NOT shorten the next
+    sleep — that's fixed-rate scheduling, a separate, not-yet-made change."""
+    _patch_all_ok(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+
+    sent_texts: list[str] = []
+
+    class _FakeTelegramReporter:
+        def __init__(self, client, bot_token, chat_id) -> None:
+            pass
+
+        def report(self, outcome) -> None:
+            pass
+
+        def report_listing(self, entries) -> None:
+            pass
+
+        def send_text(self, text: str) -> None:
+            sent_texts.append(text)
+
+    monkeypatch.setattr(cli_main, "TelegramReporter", _FakeTelegramReporter)
+
+    # `time.monotonic()` is read twice per loop iteration (cycle start, then
+    # after the run) — a 25s jump against a 20s interval simulates an overrun.
+    monotonic_values = iter([0.0, 25.0])
+    monkeypatch.setattr(cli_main.time, "monotonic", lambda: next(monotonic_values))
+
+    def _fake_sleep(seconds: int) -> None:
+        raise KeyboardInterrupt  # stop after the one simulated overrun
+
+    monkeypatch.setattr(cli_main.time, "sleep", _fake_sleep)
+
+    exit_code = cli_main.main(["--db", db_path, "--interval", "20", "--telegram"])
+
+    assert exit_code == 0
+    assert len(sent_texts) == 1
+    assert "20" in sent_texts[0]
+    assert "25.0" in sent_texts[0]
+    assert "Aviso" in capsys.readouterr().err
+
+
+def test_run_within_interval_sends_no_overrun_alert(monkeypatch, db_path: str, capsys) -> None:
+    _patch_all_ok(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "fake-chat-id")
+
+    sent_texts: list[str] = []
+
+    class _FakeTelegramReporter:
+        def __init__(self, client, bot_token, chat_id) -> None:
+            pass
+
+        def report(self, outcome) -> None:
+            pass
+
+        def report_listing(self, entries) -> None:
+            pass
+
+        def send_text(self, text: str) -> None:
+            sent_texts.append(text)
+
+    monkeypatch.setattr(cli_main, "TelegramReporter", _FakeTelegramReporter)
+
+    monotonic_values = iter([0.0, 5.0])  # well under the 20s interval
+    monkeypatch.setattr(cli_main.time, "monotonic", lambda: next(monotonic_values))
+
+    def _fake_sleep(seconds: int) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_main.time, "sleep", _fake_sleep)
+
+    exit_code = cli_main.main(["--db", db_path, "--interval", "20", "--telegram"])
+
+    assert exit_code == 0
+    assert sent_texts == []
+    assert "Aviso" not in capsys.readouterr().err
+
+
 def test_dotenv_file_is_loaded_for_telegram_credentials(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
