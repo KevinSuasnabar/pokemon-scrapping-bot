@@ -235,21 +235,26 @@ class PlaywrightTransport:
     acceptable tradeoff here, given the jittered ~20-30s interval this
     already runs under.
 
-    Honesty note: confirmed live 2026-09-29 that this gets Playwright itself
-    running end-to-end against the real Cloudflare challenge — but a fixed
-    5s wait after navigation sometimes captured the challenge's "Just a
-    moment..." interstitial instead of the real page (the challenge's own
-    JS runs, sets a cookie, then reloads — how long that takes varies).
-    Fixed by waiting for the specific element every page this adapter
-    actually parses depends on, `script#__NEXT_DATA__`, instead of a blind
-    sleep."""
+    Honesty note: confirmed live 2026-09-29 that plain headless Chromium
+    never gets past the challenge at all — it sits on the "Just a moment..."
+    interstitial for the full 30s wait, every time. Ripley's is a Cloudflare
+    "Managed Challenge", which fingerprints the browser itself (not just a
+    computational puzzle), and stock headless Chromium has known tells
+    (`navigator.webdriver`, CDP artifacts, etc.). `playwright-stealth`
+    patches the known tells — applied by wrapping `sync_playwright()` itself
+    via `Stealth().use_sync(...)`, so every browser/page it creates gets the
+    patches automatically. Not guaranteed to work: Managed Challenge is
+    specifically built to catch automation, stealth patches included — if
+    this still doesn't get past it, that's the real ceiling of what's
+    achievable here without a paid anti-bot-bypass service."""
 
     def fetch_html(self, url: str) -> RawPayload:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
+        from playwright_stealth import Stealth  # type: ignore[import-untyped]
 
         try:
-            with sync_playwright() as playwright:
+            with Stealth().use_sync(sync_playwright()) as playwright:
                 browser = playwright.chromium.launch(headless=True)
                 try:
                     page = browser.new_page()
